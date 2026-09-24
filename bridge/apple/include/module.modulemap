@@ -1,0 +1,4 @@
+module HeadwireBridge {
+  header "headwire_bridge.h"
+  export *
+}

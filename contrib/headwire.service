@@ -1,0 +1,45 @@
+[Unit]
+Description=headwire WireGuard mesh
+After=network-online.target nss-lookup.target
+Wants=network-online.target nss-lookup.target
+
+[Service]
+ExecStart=headwire run main
+ExecReload=/bin/kill -HUP $MAINPID
+# Keeps the data-path AEAD on x/crypto.
+Environment=TS_WG_ASM=0
+# Environment=LOG_LEVEL=verbose   # keep the engine's [v1]/[v2] lines
+Restart=on-failure
+RuntimeDirectory=headwire
+RuntimeDirectoryMode=0700
+
+# CAP_NET_ADMIN covers the TUN device, routes, policy rules and SO_MARK.
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+UMask=0077
+# A DNS line is applied to systemd-resolved over D-Bus, so /etc stays
+# read-only. The engine's resolv.conf modes would need ReadWritePaths=/etc.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+# The tun module must already be loaded (modules-load.d).
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# AF_UNIX is the status socket.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

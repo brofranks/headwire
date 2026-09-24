@@ -1,0 +1,25 @@
+name: headwire
+arch: ${GOARCH}
+platform: linux
+version: ${PACKAGE_VERSION}
+maintainer: Brody Franks <brody@franks.id.au>
+description: WireGuard meshes with NAT traversal and DERP relay fallback.
+license: BSD-3-Clause
+homepage: https://github.com/brofranks/headwire
+section: net
+priority: optional
+mtime: "1970-01-01T00:00:00Z"
+contents:
+  - src: ${PACKAGE_DIR}/headwire
+    expand: true
+    dst: /usr/bin/headwire
+    file_info:
+      mode: 0755
+  - src: contrib/headwire.service
+    dst: /usr/lib/systemd/system/headwire.service
+    file_info:
+      mode: 0644
+  - src: ${PACKAGE_DOCS}
+    expand: true
+    dst: /usr/share/doc/headwire
+    type: tree

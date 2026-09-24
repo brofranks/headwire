@@ -1,0 +1,176 @@
+name: Build and release
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    if: >-
+      github.event_name != 'push' ||
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '0'
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate release tag and source
+        if: github.ref_type == 'tag'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          git cat-file tag "$GITHUB_REF_NAME" | grep -q '^-----BEGIN \(SSH\|PGP\) SIGNATURE-----$'
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD "refs/remotes/origin/$DEFAULT_BRANCH"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Development checks
+        run: scripts/check.sh
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-linux
+          path: dist/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Select version
+        id: version
+        run: |
+          version="dev-${GITHUB_SHA:0:12}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="$GITHUB_REF_NAME"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Package archives, DEBs, and RPMs
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/release.sh "$RELEASE_VERSION"
+      - name: Verify archives and native binary
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          cd "dist/$RELEASE_VERSION"
+          sha256sum -c SHA256SUMS
+          tar -xzf "headwire_${RELEASE_VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP"
+          binary="$RUNNER_TEMP/headwire_${RELEASE_VERSION}_linux_amd64/headwire"
+          test "$("$binary" version)" = "headwire $RELEASE_VERSION"
+          "$binary" --help
+      - name: Install and remove Debian package
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          sudo apt-get install -y "./dist/$RELEASE_VERSION/headwire_${RELEASE_VERSION}_linux_amd64.deb"
+          test "$(/usr/bin/headwire version)" = "headwire $RELEASE_VERSION"
+          /usr/bin/headwire --help
+          cmp "$RUNNER_TEMP/headwire_${RELEASE_VERSION}_linux_amd64/headwire" /usr/bin/headwire
+          test -f /usr/share/doc/headwire/licenses/tailscale.com/LICENSE
+          test -f /usr/share/doc/headwire/headwire.conf.example
+          test "$(dpkg-deb -f "./dist/$RELEASE_VERSION/headwire_${RELEASE_VERSION}_linux_arm64.deb" Architecture)" = arm64
+          systemd-analyze verify /usr/lib/systemd/system/headwire.service
+          sudo apt-get purge -y headwire
+          test ! -e /usr/bin/headwire
+          test ! -e /usr/lib/systemd/system/headwire.service
+      - name: Install and remove RPM package on Fedora
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          docker run --rm -v "$PWD/dist/$RELEASE_VERSION:/packages:ro" -v "$RUNNER_TEMP:/archive:ro" \
+            -e RELEASE_VERSION fedora:44 bash -euo pipefail -c '
+              dnf install -y diffutils
+              dnf install -y "/packages/headwire_${RELEASE_VERSION}_linux_amd64.rpm"
+              test "$(headwire version)" = "headwire $RELEASE_VERSION"
+              headwire --help
+              cmp "/archive/headwire_${RELEASE_VERSION}_linux_amd64/headwire" /usr/bin/headwire
+              test -f /usr/share/doc/headwire/licenses/tailscale.com/LICENSE
+              test -f /usr/share/doc/headwire/headwire.conf.example
+              test "$(rpm -qp --qf "%{ARCH}" "/packages/headwire_${RELEASE_VERSION}_linux_arm64.rpm")" = aarch64
+              dnf remove -y headwire
+              test ! -e /usr/bin/headwire
+              test ! -e /usr/lib/systemd/system/headwire.service
+            '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release
+          path: dist/${{ steps.version.outputs.value }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  # The Linux runner type-checks the darwin source but runs tests only for its
+  # own OS, and it cross-builds the macOS archives but cannot run them.
+  verify-macos:
+    needs: build
+    runs-on: macos-26
+    env:
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Development checks
+        run: scripts/check.sh
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-macos
+          path: dist/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release
+          path: release
+      - name: Verify archives and native binary
+        run: |
+          cd release
+          shasum -a 256 -c SHA256SUMS
+          tar -xzf "headwire_${RELEASE_VERSION}_darwin_arm64.tar.gz" -C "$RUNNER_TEMP"
+          binary="$RUNNER_TEMP/headwire_${RELEASE_VERSION}_darwin_arm64/headwire"
+          test "$("$binary" version)" = "headwire $RELEASE_VERSION"
+          "$binary" --help
+
+  release:
+    environment: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [build, verify-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release
+          path: release
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd release
+          sha256sum -c SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" ./*.tar.gz ./*.deb ./*.rpm SHA256SUMS \
+            --verify-tag --draft --title "$GITHUB_REF_NAME" \
+            --notes 'Replace these notes before publishing, describing what changed in this release.'

@@ -1,0 +1,35 @@
+# Headwire example configuration.
+
+[Interface]
+PrivateKey = <headwire genkey>
+Address = 100.64.0.1/32, fd7a:115c::1/128
+HomeDERP = 1                        # region this node is reachable through
+ListenPort = 51820                  # omitted or 0 picks a random port
+DNS = 100.64.0.53, corp.example     # nameserver and search domain
+AllowIn = tcp/22, icmp              # inbound policy for peers without their own
+
+# Relay regions. Every HomeDERP must name one. Nodes are relay hostnames in
+# preference order, reached on TLS 443 and STUN 3478.
+[DERPRegion]
+ID = 1
+Nodes = derp1.example.com, derp2.example.com
+
+# A mesh peer behind NAT: traffic relays through region 1 until discovery finds
+# a direct path. AllowedIPs routes the peer's LAN through it and authorizes
+# those addresses as its sources. AllowIn replaces the interface policy for
+# this peer, admitting everything it sends, forwarded traffic included.
+[Peer]
+PublicKey = <headwire pubkey < peer.key>
+DiscoKey = <headwire discokey < peer.key>
+PresharedKey = <headwire genpsk>
+AllowedIPs = 100.64.0.2/32, fd7a:115c::2/128, 192.168.10.0/24
+HomeDERP = 1
+AllowIn = any
+
+# An ordinary WireGuard peer, selected by omitting DiscoKey: a provider server
+# with a fixed endpoint. The default routes send all other traffic through it.
+[Peer]
+PublicKey = <provider public key>
+Endpoint = vpn.example.net:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+MasqueradeAddress = 10.69.0.5, fc00:bbbb::5

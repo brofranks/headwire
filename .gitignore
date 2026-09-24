@@ -1,0 +1,9 @@
+# Release archives, notices and coverage reports.
+/dist/
+# `go build ./cmd/headwire` output.
+/headwire
+
+# Editor and OS files.
+.idea/
+*.iml
+.DS_Store

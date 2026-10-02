@@ -7,11 +7,9 @@ updates:
     allow:
       - dependency-type: direct
     ignore:
-      # Every tag the fork inherited from upstream's pre-fork history outranks
-      # a v0.0.0-<date>-<commit> pseudo-version and declares the module as
-      # golang.zx2c4.com/wireguard, so proposing one fails the job on the path
-      # mismatch. The requirement tracks tailscale.com's pseudo-version, which
-      # no tag can supersede, so ignoring all of them hides no real update.
+      # Historical tags cached by the Go proxy outrank the fork's commit-based
+      # versions. The latest declares a different module path and cannot be used.
+      # Update the fork alongside tailscale.com.
       - dependency-name: github.com/tailscale/wireguard-go
         versions: ['>= 0.0.1']
   - package-ecosystem: github-actions

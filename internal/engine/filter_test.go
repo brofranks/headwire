@@ -269,6 +269,22 @@ func TestAllowInPacketSemantics(t *testing.T) {
 	}
 }
 
+func TestMasqueradeMalformedIPv4(t *testing.T) {
+	n := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.1/32")}
+	p := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.2/32")}
+	e, ch := startInjected(t, n.config(t, "", p, "MasqueradeAddress = 10.69.0.5"))
+	ch.Inbound = make(chan []byte, 1)
+	buf := packet.Generate(header(ipproto.UDP, p.addr.Addr(), netip.MustParseAddr("10.69.0.5")), nil)
+	buf[0] = 0x4f // The declared 60-byte header exceeds the 20-byte packet.
+	count, err := e.tun.Write([][]byte{buf}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(ch.Inbound) != 0 {
+		t.Fatal("malformed packet reached the device")
+	}
+}
+
 // TestAllowInAfterMasquerade feeds decrypted packets through the production
 // TUN wrapper, including its inbound DNAT. Matching the on-wire masquerade
 // address would be incorrect.

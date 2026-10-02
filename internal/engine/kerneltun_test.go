@@ -29,8 +29,8 @@ func TestKernelTUN(t *testing.T) {
 	t.Cleanup(func() { createTUN, newOSConfigurator, useSocketMark = oldCreate, oldDNS, oldMark })
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), 0}
 	plain, withDNS := a.parse(t, "", ""), a.parse(t, "DNS = 192.0.2.53, example.com", "")
-	device := func(dev tun.Device, err error) func(string, int) (tun.Device, error) {
-		return func(string, int) (tun.Device, error) { return dev, err }
+	device := func(dev tun.Device, err error) func(string, int, ...tun.Option) (tun.Device, error) {
+		return func(string, int, ...tun.Option) (tun.Device, error) { return dev, err }
 	}
 	dnsErr, setErr := errors.New("no resolver"), errors.New("no resolved")
 	rec := &recordingDNS{}
@@ -47,7 +47,7 @@ func TestKernelTUN(t *testing.T) {
 	logf := tstest.WhileTestRunningLogger(t)
 
 	// Without osrouter linked, router.New fails as on an unsupported OS.
-	for name, create := range map[string]func(string, int) (tun.Device, error){
+	for name, create := range map[string]func(string, int, ...tun.Option) (tun.Device, error){
 		"create": device(nil, errors.New("no /dev/net/tun")),
 		"name":   device(unnamedTun{tuntest.NewChannelTUN().TUN()}, nil),
 		"router": device(tuntest.NewChannelTUN().TUN(), nil),

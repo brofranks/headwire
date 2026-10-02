@@ -89,9 +89,8 @@ func TestDERPRoundTrip(t *testing.T) {
 			return
 		}
 		dm := localDERP(t)
-		eb := startRelayed(t, dm, b, a)
+		startRelayed(t, dm, b, a)
 		ea := startRelayed(t, dm, a, b)
-		warm(t, ea, eb)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := dialRoundTripUntil(ctx, ea, netip.AddrPortFrom(b.addr.Addr(), testEchoPort)); err != nil {
@@ -107,9 +106,8 @@ func TestDERPRoundTrip(t *testing.T) {
 	})
 	t.Run("direct-upgrade", func(t *testing.T) {
 		dm := localDERP(t)
-		eb := startRelayed(t, dm, b, a)
+		startRelayed(t, dm, b, a)
 		ea := startRelayed(t, dm, a, b)
-		warm(t, ea, eb)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := dialRoundTripUntil(ctx, ea, netip.AddrPortFrom(b.addr.Addr(), testEchoPort)); err != nil {

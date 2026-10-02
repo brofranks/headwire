@@ -159,18 +159,26 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release
           path: release
+      - name: Check checksums
+        working-directory: release
+        run: sha256sum -c SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           cd release
-          sha256sum -c SHA256SUMS
           gh release create "$GITHUB_REF_NAME" ./*.tar.gz ./*.deb ./*.rpm SHA256SUMS \
             --verify-tag --draft --title "$GITHUB_REF_NAME" \
             --notes 'Replace these notes before publishing, describing what changed in this release.'

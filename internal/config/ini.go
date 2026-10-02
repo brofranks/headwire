@@ -47,7 +47,7 @@ func parseINI(src []byte) ([]section, error) {
 			return nil, fmt.Errorf("line %d: expected Key = Value", lineNo)
 		}
 		if len(sections) == 0 {
-			return nil, fmt.Errorf("line %d: key %q outside of any section", lineNo, strings.TrimSpace(k))
+			return nil, fmt.Errorf("line %d: key outside of any section", lineNo)
 		}
 		s := &sections[len(sections)-1]
 		s.entries = append(
@@ -132,7 +132,7 @@ func (s *section) checkKnownKeys(allowed ...string) error {
 	}
 	for _, e := range s.entries {
 		if !slices.ContainsFunc(allowed, fold(e.key)) {
-			return fmt.Errorf("line %d: unknown key %q in [%s]", e.line, e.key, s.name)
+			return fmt.Errorf("line %d: unknown key", e.line)
 		}
 	}
 	return nil

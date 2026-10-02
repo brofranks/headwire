@@ -123,10 +123,10 @@ func TestParseErrors(t *testing.T) {
 		name, src, want string
 	}{
 		{"no interface", peer, "missing [Interface]"},
-		{"key outside section", "PrivateKey = x\n", "line 1: key \"PrivateKey\" outside"},
+		{"key outside section", "PrivateKey = x\n", "line 1: key outside of any section"},
 		{"unknown section", iface + "[Foo]\n", "unknown section [Foo]"},
-		{"unknown peer key", iface + peer + "Unknown = true\n", "unknown key \"Unknown\""},
-		{"unsupported wireguard key", iface + peer + "PersistentKeepalive = 25\n", "unknown key \"PersistentKeepalive\""},
+		{"unknown peer key", iface + peer + "Unknown = true\n", "unknown key"},
+		{"unsupported wireguard key", iface + peer + "PersistentKeepalive = 25\n", "unknown key"},
 		{"bad key length", strings.Replace(iface, keyA, "AAAA", 1), "PrivateKey: key must be 44 base64"},
 		{"non-canonical key", strings.Replace(iface, keyA, keyA[:42]+"F=", 1), "PrivateKey: key must be 44 base64"},
 		{"bad port", iface + "ListenPort = 70000\n", "ListenPort: port must be 0-65535"},
@@ -170,6 +170,27 @@ func TestParseErrors(t *testing.T) {
 			_, err := Parse([]byte(tt.src))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseErrorsDoNotExposeKeys(t *testing.T) {
+	for _, tt := range []struct{ name, src, want string }{
+		{"bare key before section", "\n" + keyA + "\n", "line 2: key outside of any section"},
+		{"bare key in section", iface + keyA + "\n", "line 4: unknown key"},
+		{"missing separator", "[Interface]\nPrivateKey " + keyA + "\n", "line 2: unknown key"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src))
+			if err == nil {
+				t.Fatal("Parse accepted malformed configuration")
+			}
+			if strings.Contains(err.Error(), strings.TrimSuffix(keyA, "=")) {
+				t.Fatal("Parse error exposes key material")
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
 		})
 	}

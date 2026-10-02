@@ -3,7 +3,7 @@ module brof.dev/headwire
 go 1.27.1
 
 require (
-	github.com/gaissmai/bart v0.29.1
+	github.com/gaissmai/bart v0.30.0
 	github.com/tailscale/wireguard-go v0.0.0-20260924224943-0a83b87f7908
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb

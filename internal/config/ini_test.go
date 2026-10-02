@@ -35,7 +35,7 @@ func TestINIErrors(t *testing.T) {
 		{"\n[", "line 2: malformed section header"},
 		{"[]", "line 1: empty section header"},
 		{"[Peer]\nkey", "line 2: expected Key = Value"},
-		{"key=value", "line 1: key \"key\" outside"},
+		{"key=value", "line 1: key outside of any section"},
 		{"; comment", "line 1: expected Key = Value"},
 	} {
 		t.Run(tt.src, func(t *testing.T) {

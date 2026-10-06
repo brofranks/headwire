@@ -18,6 +18,7 @@ pong from 100.64.0.2 via 203.0.113.10:41198 in 1ms
 ```
 
 Headwire is built using Tailscale's open-source data plane libraries.
+See [this blog post](https://franks.id.au/tailscale-derp/) for background.
 
 ## Features
 

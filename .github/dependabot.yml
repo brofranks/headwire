@@ -12,6 +12,35 @@ updates:
       # Update the fork alongside tailscale.com.
       - dependency-name: github.com/tailscale/wireguard-go
         versions: ['>= 0.0.1']
+  - package-ecosystem: gomod
+    directory: /tools/check
+    schedule:
+      interval: weekly
+    # Go marks tool dependencies as indirect requirements.
+    allow:
+      - dependency-name: github.com/rhysd/actionlint
+        dependency-type: all
+      - dependency-name: golang.org/x/tools
+        dependency-type: all
+      - dependency-name: golang.org/x/vuln
+        dependency-type: all
+      - dependency-name: honnef.co/go/tools
+        dependency-type: all
+      - dependency-name: mvdan.cc/sh/v3
+        dependency-type: all
+  - package-ecosystem: gomod
+    directory: /tools/release
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: github.com/google/go-licenses/v2
+        dependency-type: all
+      - dependency-name: github.com/goreleaser/nfpm/v2
+        dependency-type: all
+  - package-ecosystem: pip
+    directory: /tools/check
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

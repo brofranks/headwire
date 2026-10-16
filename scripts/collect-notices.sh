@@ -2,7 +2,7 @@
 # Source once per build, and collect using the caller's compilation environment.
 install_notice_collector() {
     GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) CGO_ENABLED=0 GOBIN="$1" \
-        go install github.com/google/go-licenses/v2@v2.0.1
+        go -C "$(dirname "${BASH_SOURCE[0]}")/../tools/release" install github.com/google/go-licenses/v2
     notice_collector="$1/go-licenses"
 }
 

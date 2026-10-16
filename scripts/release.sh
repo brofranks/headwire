@@ -34,7 +34,7 @@ trap 'rm -rf "$work"' EXIT
 install_notice_collector "$work/bin"
 
 GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) GOBIN="$work/bin" \
-    go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+    go -C tools/release install github.com/goreleaser/nfpm/v2/cmd/nfpm
 
 for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
     export GOOS=${platform%/*} GOARCH=${platform#*/}

@@ -14,19 +14,18 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export CGO_ENABLED=1
 . scripts/goflags.sh
-GOBIN="$work" go install golang.org/x/tools/cmd/goimports@v0.50.0
-# Staticcheck's importer needs x/tools support for Go 1.27 export data.
-(
-    cd "$work"
-    go mod init headwire-check-tools
-    go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.50.0
-    GOBIN="$work" go install honnef.co/go/tools/cmd/staticcheck
-)
-GOBIN="$work" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-GOBIN="$work" go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
-GOBIN="$work" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+for module in tools/check tools/release; do
+    go -C "$module" mod tidy -diff
+    go -C "$module" mod verify
+done
+GOBIN="$work" go -C tools/check install \
+    golang.org/x/tools/cmd/goimports \
+    honnef.co/go/tools/cmd/staticcheck \
+    golang.org/x/vuln/cmd/govulncheck \
+    mvdan.cc/sh/v3/cmd/shfmt \
+    github.com/rhysd/actionlint/cmd/actionlint
 python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q shellcheck-py==0.11.0.1
+"$work/venv/bin/pip" install -q --require-hashes -r tools/check/requirements.txt
 # actionlint finds shellcheck here for workflow run blocks.
 PATH="$work/venv/bin:$PATH"
 

@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
+      exclude:
+        - tailscale.com
     allow:
       - dependency-type: direct
     ignore:

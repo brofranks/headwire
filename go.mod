@@ -1,6 +1,6 @@
 module brof.dev/headwire
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/gaissmai/bart v0.30.0
@@ -8,7 +8,7 @@ require (
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
 	golang.org/x/sys v0.49.0
-	tailscale.com v1.104.1
+	tailscale.com v1.104.2
 )
 
 require (

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"brof.dev/headwire/internal/config"
 	"github.com/tailscale/wireguard-go/tun"
 	"github.com/tailscale/wireguard-go/tun/tuntest"
+	"tailscale.com/net/netmon"
 	"tailscale.com/types/key"
 )
 
@@ -84,5 +86,57 @@ func TestInjectedTunRoundTrip(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no packet arrived on the peer's injected device")
 		}
+	}
+}
+
+type namedTun struct{ tun.Device }
+
+func (namedTun) Name() (string, error) { return "hwtest0", nil }
+
+// TestTunnelIsNotAnEndpoint checks that the tunnel's address, outside
+// Tailscale's ranges, stays out of the endpoints advertised to peers. Start
+// explains why it must.
+func TestTunnelIsNotAnEndpoint(t *testing.T) {
+	up := net.FlagUp | net.FlagRunning
+	netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
+		return []netmon.Interface{
+			{
+				Interface: &net.Interface{Index: 1001, MTU: 1500, Name: "eth0", Flags: up},
+				AltAddrs:  []net.Addr{&net.IPNet{IP: net.ParseIP("192.0.2.10"), Mask: net.CIDRMask(24, 32)}},
+			},
+			{
+				Interface: &net.Interface{Index: 1002, MTU: 1280, Name: "hwtest0", Flags: up},
+				AltAddrs:  []net.Addr{&net.IPNet{IP: net.ParseIP("10.99.0.1"), Mask: net.CIDRMask(24, 32)}},
+			},
+		}, nil
+	})
+	t.Cleanup(func() {
+		netmon.RegisterInterfaceGetter(nil)
+		netmon.SetTailscaleInterfaceProps("", 0)
+	})
+
+	a := node{key.NewNode(), netip.MustParsePrefix("10.99.0.1/24"), 0}
+	e, err := Start(a.parse(t, "", ""), tstest.WhileTestRunningLogger(t), Options{Tun: namedTun{tuntest.NewChannelTUN().TUN()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+
+	tunnel, lan := a.addr.Addr(), netip.MustParseAddr("192.0.2.10")
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		e.mu.Lock()
+		eps := e.eps
+		e.mu.Unlock()
+		if slices.ContainsFunc(eps, func(ep netip.AddrPort) bool { return ep.Addr() == tunnel }) {
+			t.Fatalf("endpoints %v include the tunnel's address", eps)
+		}
+		if slices.ContainsFunc(eps, func(ep netip.AddrPort) bool { return ep.Addr() == lan }) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("endpoints %v never included 192.0.2.10", eps)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

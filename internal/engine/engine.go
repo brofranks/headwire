@@ -160,20 +160,14 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 			return nil, err
 		}
 	}
-	// Both settings are process-wide and netstack has no interface to name.
+	// The setting is process-wide and netstack has no interface to name.
 	if !opts.Netstack {
-		// netmon identifies its own tunnel by Tailscale's interface
-		// names, or on darwin by a utun holding a Tailscale CGNAT
-		// address. Headwire's names and overlay addresses are neither, so
-		// without this the tunnel counts as an ordinary interface in
-		// netmon's link state.
+		// netmon otherwise identifies its own tunnel by Tailscale's
+		// interface names and addresses, which Headwire's are not.
+		// Registering it keeps the tunnel out of netmon's link state and
+		// out of the local endpoints magicsock advertises, which would
+		// offer peers a "direct" path through the tunnel itself.
 		netmon.SetTailscaleInterfaceProps(e.tunName, 0)
-		// That does not keep the tunnel's address out of magicsock's
-		// endpoints: netmon.LocalAddresses skips only Tailscale's own
-		// ranges, and magicsock sends the result in its own
-		// call-me-maybes. A peer probing it would find a "direct" path
-		// that runs through the tunnel it is meant to carry.
-		netmon.RegisterInterfaceGetter(interfacesExcept(e.tunName))
 	}
 	if e.eng, err = wgengine.NewUserspaceEngine(logf, conf); err != nil {
 		return nil, err
@@ -625,21 +619,6 @@ func (e *Engine) peerForIP(ip netip.Addr) (wgengine.PeerForIP, bool) {
 		return wgengine.PeerForIP{}, false
 	}
 	return wgengine.PeerForIP{Node: n}, true
-}
-
-// interfacesExcept lists the system's interfaces without the named one. The
-// getter it feeds is process-wide, like the rest of netmon's tunnel identity.
-func interfacesExcept(name string) func() ([]netmon.Interface, error) {
-	return func() ([]netmon.Interface, error) {
-		ifs, err := net.Interfaces()
-		var ret []netmon.Interface
-		for i := range ifs {
-			if ifs[i].Name != name {
-				ret = append(ret, netmon.Interface{Interface: &ifs[i]})
-			}
-		}
-		return ret, err
-	}
 }
 
 // onStatus advertises our UDP endpoints whenever magicsock learns a new

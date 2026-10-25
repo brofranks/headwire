@@ -10,14 +10,10 @@ import (
 	"brof.dev/headwire/internal/config"
 	"github.com/tailscale/wireguard-go/tun"
 	"github.com/tailscale/wireguard-go/tun/tuntest"
-	"tailscale.com/control/controlknobs"
 	"tailscale.com/health"
 	"tailscale.com/net/dns"
 	"tailscale.com/tstest"
 	"tailscale.com/types/key"
-	"tailscale.com/types/logger"
-	"tailscale.com/util/eventbus"
-	"tailscale.com/util/syspolicy/policyclient"
 	"tailscale.com/wgengine/router"
 )
 
@@ -35,7 +31,7 @@ func TestKernelTUN(t *testing.T) {
 	dnsErr, setErr := errors.New("no resolver"), errors.New("no resolved")
 	rec := &recordingDNS{}
 	configurator := func(newErr, setErr error) {
-		newOSConfigurator = func(logger.Logf, *health.Tracker, *eventbus.Bus, policyclient.Client, *controlknobs.Knobs, string) (dns.OSConfigurator, error) {
+		newOSConfigurator = func(*Engine, *health.Tracker, tun.Device) (dns.OSConfigurator, error) {
 			if newErr != nil {
 				return nil, newErr
 			}
@@ -95,6 +91,16 @@ func TestKernelTUN(t *testing.T) {
 		if rec.closed != (cfg == withDNS) {
 			t.Fatalf("closed = %v", rec.closed)
 		}
+	}
+
+	// Only Windows refuses an MTU other than the engine default.
+	createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
+	e, err := Start(a.parse(t, "MTU = 1420", ""), logf, Options{})
+	if (err != nil) != (runtime.GOOS == "windows") {
+		t.Fatalf("MTU 1420: %v", err)
+	}
+	if err == nil {
+		e.Close()
 	}
 }
 

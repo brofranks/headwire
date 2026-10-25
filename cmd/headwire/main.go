@@ -13,8 +13,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -36,14 +34,6 @@ const maxStatusRequest = 64
 // writes or never reads cannot hold the serial status service.
 var statusTimeout = 5 * time.Second
 
-// socketPath is where a running node serves its status to `show`.
-var socketPath = func() string {
-	if runtime.GOOS == "darwin" {
-		return "/var/run/headwire/headwire.sock"
-	}
-	return "/run/headwire/headwire.sock"
-}()
-
 var program = cli.Program{
 	Request: request,
 	Usage: `  run [NAME | FILE]      run the node on a TUN interface (root, default: main)
@@ -64,7 +54,7 @@ func realMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // request sends one line to the running node and returns its reply. A reply
 // starting with "error: " is the node's refusal.
 func request(line string) (string, error) {
-	c, err := net.DialTimeout("unix", socketPath, statusTimeout)
+	c, err := dialStatus()
 	if err != nil {
 		return "", fmt.Errorf("cannot connect to status socket: %w", err)
 	}
@@ -155,32 +145,10 @@ func reloadNode(path string, reload func(*config.Config) error, logger *log.Logg
 	return nil
 }
 
-// listenStatus claims the status socket. A socket something still answers
-// on belongs to another node, and a stale one is replaced. Status names
-// peers, endpoints and AllowedIPs, so the directory and socket are private
-// to the daemon's user.
-func listenStatus() (net.Listener, error) {
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		return nil, err
-	}
-	if c, err := net.Dial("unix", socketPath); err == nil {
-		c.Close()
-		return nil, fmt.Errorf("%s: socket in use", socketPath)
-	}
-	os.Remove(socketPath)
-	ln, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		ln.Close()
-		return nil, err
-	}
-	return ln, nil
-}
-
 // serveStatus answers on the socket until it closes: each connection sends
-// one line naming the field it wants and reads the reply until EOF.
+// one line naming the field it wants and reads the reply until EOF. Status
+// names peers, endpoints and AllowedIPs, so each OS's listenStatus restricts
+// who connects.
 func serveStatus(ln net.Listener, status func(field string) (string, error)) {
 	for {
 		c, err := ln.Accept()

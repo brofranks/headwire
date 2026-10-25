@@ -40,6 +40,7 @@ import (
 	"tailscale.com/types/netmap"
 	"tailscale.com/types/nettype"
 	"tailscale.com/util/eventbus"
+	"tailscale.com/util/syspolicy/policyclient"
 	"tailscale.com/util/usermetric"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/magicsock"
@@ -52,7 +53,8 @@ import (
 	_ "tailscale.com/feature/condregister/portmapper"
 )
 
-// TUNName is the interface name in TUN mode. Darwin allocates the next utun.
+// TUNName is the interface name in TUN mode. Darwin allocates the next utun,
+// and Windows names the Wintun adapter Headwire.
 const TUNName = "headwire0"
 
 // Options selects how the engine attaches to the network.
@@ -275,7 +277,19 @@ func derpMap(cfg *config.Config) *tailcfg.DERPMap {
 // The kernel device and host DNS need root, so tests replace them.
 var (
 	createTUN         = tun.CreateTUN
-	newOSConfigurator = dns.NewOSConfigurator
+	newOSConfigurator = func(
+		e *Engine,
+		tracker *health.Tracker,
+		dev tun.Device,
+	) (dns.OSConfigurator, error) {
+		name, err := dnsInterfaceName(dev)
+		if err != nil {
+			return nil, err
+		}
+		// The Windows configurator refuses a nil policy client.
+		return dns.NewOSConfigurator(e.logf, tracker, e.bus,
+			policyclient.NoPolicyClient{}, nil, name)
+	}
 )
 
 // kernelTUN creates the interface this process owns, with its OS router.
@@ -285,8 +299,16 @@ func (e *Engine) kernelTUN(
 	conf *wgengine.Config,
 ) (err error) {
 	name := TUNName
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		name = "utun"
+	case "windows":
+		name = "Headwire"
+		// The Windows router resets the adapter MTU to the engine default on
+		// every reconfiguration.
+		if mtu := int(tstun.DefaultTUNMTU()); MTU(cfg) != mtu {
+			return fmt.Errorf("MTU is fixed at %d on Windows", mtu)
+		}
 	}
 	dev, err := createTUN(name, MTU(cfg))
 	if err != nil {
@@ -308,7 +330,7 @@ func (e *Engine) kernelTUN(
 	// DNS line no configurator exists, so the host's resolver setup is
 	// neither probed nor touched.
 	if len(cfg.Interface.DNS)+len(cfg.Interface.DNSSearch) > 0 {
-		e.hostDNS, err = newOSConfigurator(e.logf, tracker, e.bus, nil, nil, e.tunName)
+		e.hostDNS, err = newOSConfigurator(e, tracker, dev)
 		e.unwatch = func() {}
 	}
 	return err

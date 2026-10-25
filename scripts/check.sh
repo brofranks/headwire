@@ -49,14 +49,14 @@ go vet ./...
 dataplane='wgengine|net/tstun|gvisor\.dev'
 grep -qE "$dataplane" <<< "$(go list -deps ./cmd/headwire)" ||
     die 'the data-plane pattern no longer matches cmd/headwire.'
-if grep -qE "$dataplane" <<< "$(go list -deps ./internal/cli)"; then
-    die 'internal/cli links the data plane.'
-fi
-# Type-check the other host's tagged source. Cgo-only bridge/apple, including
+# Type-check every host's tagged source. Cgo-only bridge/apple, including
 # its ios slice, needs the native macOS run above and bridge/apple/build.sh.
-for os in linux darwin; do
+for os in linux darwin windows; do
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 go vet ./...
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 "$work/staticcheck" ./...
+    if grep -qE "$dataplane" <<< "$(GOOS=$os GOARCH=arm64 go list -deps ./internal/cli)"; then
+        die "internal/cli links the data plane on $os."
+    fi
 done
 go test -race -count=1 -coverpkg=./... -covermode=atomic -coverprofile="$coverage/coverage.out" ./...
 go tool cover -func="$coverage/coverage.out" | tee "$coverage/functions.txt"

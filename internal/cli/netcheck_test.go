@@ -88,6 +88,8 @@ DERP latency:
 
 func TestNetcheckUsage(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "main.conf")
+	// The OS words the missing-file error.
+	_, missingErr := os.ReadFile(cfg + ".missing")
 	// The placeholder PrivateKey is the bytes 0x00 through 0x1f in base64.
 	if err := os.WriteFile(cfg, []byte("[Interface]\nPrivateKey = AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\nAddress = 10.0.0.1/32\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -97,7 +99,7 @@ func TestNetcheckUsage(t *testing.T) {
 		want string
 	}{
 		{[]string{"netcheck", cfg, "extra"}, "usage: headwire netcheck"},
-		{[]string{"netcheck", cfg + ".missing"}, "no such file"},
+		{[]string{"netcheck", cfg + ".missing"}, missingErr.Error()},
 		{[]string{"netcheck", cfg}, "requires at least one configured DERPRegion"},
 	} {
 		var out, errOut bytes.Buffer

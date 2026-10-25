@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build every supported archive, with its distribution notices. Package the
-# Linux binaries and notices for Debian and RPM installations as well.
+# Linux binaries and notices for Debian and RPM installations as well, and
+# bundle wintun.dll with the Windows binaries.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,19 +37,38 @@ install_notice_collector "$work/bin"
 GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) GOBIN="$work/bin" \
     go -C tools/release install github.com/goreleaser/nfpm/v2/cmd/nfpm
 
-for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+# The Wintun bindings wireguard-go uses load wintun.dll from the binary's
+# directory. The release is the one tailscale.com's tsconst/wintun pins.
+read -r wintun_url wintun_sha256 < <(go run scripts/wintun.go)
+mkdir "$work/wintun"
+curl -fsSL -o "$work/wintun/release.zip" "$wintun_url"
+sha256sum -c --quiet <<< "$wintun_sha256  $work/wintun/release.zip"
+unzip -q "$work/wintun/release.zip" -d "$work/wintun"
+
+for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 windows/arm64; do
     export GOOS=${platform%/*} GOARCH=${platform#*/}
     name="headwire_${version}_${GOOS}_${GOARCH}"
     package="$work/$name"
     mkdir "$package"
-    go build -trimpath -ldflags="-X brof.dev/headwire/internal/cli.version=$version" -o "$package/headwire" ./cmd/headwire
+    binary=headwire
+    [[ $GOOS != windows ]] || binary=headwire.exe
+    go build -trimpath -ldflags="-X brof.dev/headwire/internal/cli.version=$version" -o "$package/$binary" ./cmd/headwire
     collect_notices ./cmd/headwire "$package"
     cp LICENSE README.md contrib/headwire.conf.example "$package/"
     # The systemd unit and the native packages are Linux-only.
     if [[ $GOOS == linux ]]; then
         cp contrib/headwire.service "$package/"
     fi
-    (cd "$package" && go version -m headwire) > "$package/modules.txt"
+    (cd "$package" && go version -m "$binary") > "$package/modules.txt"
+    if [[ $GOOS == windows ]]; then
+        cp "$work/wintun/wintun/bin/$GOARCH/wintun.dll" "$package/"
+        mkdir "$package/licenses/wintun"
+        cp "$work/wintun/wintun/LICENSE.txt" "$package/licenses/wintun/"
+        # zip keeps file times in local time, and its format starts in 1980.
+        find "$package" -exec touch -d 1980-01-01T00:00:00Z {} +
+        (cd "$work" && find "$name" | LC_ALL=C sort | TZ=UTC0 zip -q -X "$name.zip" -@)
+        continue
+    fi
     tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
         -C "$work" -cf - "$name" | gzip -n > "$work/$name.tar.gz"
     [[ $GOOS == linux ]] || continue
@@ -65,6 +85,6 @@ done
 # release.
 mkdir -p dist
 mkdir "dist/$version"
-mv "$work/"*.tar.gz "$work/"*.deb "$work/"*.rpm "dist/$version/"
-(cd "dist/$version" && sha256sum ./*.tar.gz ./*.deb ./*.rpm > SHA256SUMS)
+mv "$work/"*.tar.gz "$work/"*.zip "$work/"*.deb "$work/"*.rpm "dist/$version/"
+(cd "dist/$version" && sha256sum ./*.tar.gz ./*.zip ./*.deb ./*.rpm > SHA256SUMS)
 printf 'Release artifacts: dist/%s\n' "$version"

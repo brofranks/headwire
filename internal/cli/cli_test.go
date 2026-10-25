@@ -39,7 +39,8 @@ func TestPubkeyDecodedLength(t *testing.T) {
 }
 
 // TestGenerateKeys covers genkey and genpsk: each prints one fresh decodable
-// key, warns when stdout is a file others can read, and takes no arguments.
+// key, stays quiet on a pipe, and takes no arguments. TestWorldReadable
+// covers the warning for a file others can read.
 func TestGenerateKeys(t *testing.T) {
 	for _, command := range []string{"genkey", "genpsk"} {
 		var first, second, errOut bytes.Buffer
@@ -53,15 +54,6 @@ func TestGenerateKeys(t *testing.T) {
 			t.Fatalf("%s extra: code=%d, err=%s", command, code, &errOut)
 		}
 
-		file, err := os.OpenFile(filepath.Join(t.TempDir(), "key"), os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		errOut.Reset()
-		if code := Run([]string{command}, strings.NewReader(""), file, &errOut, Program{}); code != 0 || !strings.Contains(errOut.String(), "group or other can access") {
-			t.Fatalf("%s to file: code=%d, err=%s", command, code, &errOut)
-		}
 		r, w, err := os.Pipe()
 		if err != nil {
 			t.Fatal(err)
@@ -117,16 +109,24 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-// TestReadConfigPermissions shows check selecting a NAME or FILE and
-// surfacing config.Load's refusal. The mode rules themselves are tested
-// with config.Load.
-func TestReadConfigPermissions(t *testing.T) {
-	t.Cleanup(func() { config.Dir = "/etc/headwire" })
+// writeMain installs a one-node main.conf in a fresh config.Dir and returns
+// its path.
+func writeMain(t *testing.T) string {
+	t.Helper()
+	old := config.Dir
+	t.Cleanup(func() { config.Dir = old })
 	config.Dir = t.TempDir()
 	path := filepath.Join(config.Dir, "main.conf")
 	if err := os.WriteFile(path, []byte("[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE=\nAddress = 100.64.0.1/32\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return path
+}
+
+// TestReadConfig shows check selecting a NAME or FILE. TestWorldReadable
+// covers surfacing config.Load's warning.
+func TestReadConfig(t *testing.T) {
+	path := writeMain(t)
 	var out, errOut bytes.Buffer
 	for _, args := range [][]string{{"check"}, {"check", "main"}, {"check", path}} {
 		if code := realMain(args, strings.NewReader(""), &out, &errOut); code != 0 {
@@ -135,14 +135,6 @@ func TestReadConfigPermissions(t *testing.T) {
 	}
 	if code := realMain([]string{"check", "other"}, strings.NewReader(""), &out, &errOut); code != 2 || !strings.Contains(errOut.String(), filepath.Join(config.Dir, "other.conf")) {
 		t.Fatalf("other: code=%d, err=%s", code, &errOut)
-	}
-	// Chmod, as WriteFile's mode is subject to the umask.
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	errOut.Reset()
-	if code := realMain([]string{"check", path}, strings.NewReader(""), &out, &errOut); code != 0 || !strings.HasPrefix(errOut.String(), "Warning: "+path) || !strings.Contains(errOut.String(), "chmod 600") {
-		t.Fatalf("code=%d, err=%s", code, &errOut)
 	}
 }
 
@@ -178,7 +170,7 @@ func TestProgramCommands(t *testing.T) {
 // the general usage is the one place the NAME rule and its default are stated.
 func TestConfigHelp(t *testing.T) {
 	for args, want := range map[string]string{
-		"--help":          "NAME selects /etc/headwire/NAME.conf",
+		"--help":          "NAME selects " + config.Path("NAME"),
 		"check --help":    "usage: headwire check [NAME | FILE]\n",
 		"netcheck --help": "usage: headwire netcheck [NAME | FILE]\n",
 	} {

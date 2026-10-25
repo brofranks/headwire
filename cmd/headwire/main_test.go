@@ -62,16 +62,6 @@ func TestLocalDiagnostics(t *testing.T) {
 	}
 }
 
-// useSocket points the status client and server at a socket under a temporary
-// directory for the test's duration.
-func useSocket(t *testing.T, timeout time.Duration) {
-	t.Helper()
-	oldPath, oldTimeout := socketPath, statusTimeout
-	t.Cleanup(func() { socketPath, statusTimeout = oldPath, oldTimeout })
-	socketPath = filepath.Join(t.TempDir(), "run", "s.sock")
-	statusTimeout = timeout
-}
-
 func TestStatusSocket(t *testing.T) {
 	useSocket(t, 200*time.Millisecond)
 
@@ -80,21 +70,16 @@ func TestStatusSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
+	// A second node finds the socket in use even before the first serves it.
+	if _, err := listenStatus(); err == nil || !strings.Contains(err.Error(), "socket in use") {
+		t.Fatalf("second node: %v", err)
+	}
 	go serveStatus(ln, func(field string) (string, error) {
 		if field == "ping 10.0.0.9" {
 			return "", errors.New("10.0.0.9 is not in AllowedIPs")
 		}
 		return "field=" + field + "\n", nil
 	})
-	if _, err := listenStatus(); err == nil || !strings.Contains(err.Error(), "socket in use") {
-		t.Fatalf("second node: %v", err)
-	}
-	for path, want := range map[string]os.FileMode{socketPath: 0o600, filepath.Dir(socketPath): 0o700} {
-		fi, err := os.Stat(path)
-		if err != nil || fi.Mode().Perm() != want {
-			t.Fatalf("%s: mode = %v, %v; want %04o", path, fi.Mode().Perm(), err, want)
-		}
-	}
 	request := func(t *testing.T) {
 		t.Helper()
 		var out, errOut bytes.Buffer
@@ -114,7 +99,7 @@ func TestStatusSocket(t *testing.T) {
 	}
 
 	// A client that never writes is cut off, and the service carries on.
-	silent, err := net.Dial("unix", socketPath)
+	silent, err := dialStatus()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +111,7 @@ func TestStatusSocket(t *testing.T) {
 	request(t)
 
 	// So is one that never ends its line.
-	long, err := net.Dial("unix", socketPath)
+	long, err := dialStatus()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,10 +153,7 @@ func TestReloadOutcomes(t *testing.T) {
 
 func TestShowDeadline(t *testing.T) {
 	useSocket(t, 50*time.Millisecond)
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := listenStatus()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +170,7 @@ func TestShowDeadline(t *testing.T) {
 }
 
 func TestIPCommand(t *testing.T) {
-	// The argument matrix lives in internal/cli. This covers the Unix
-	// transport.
+	// The argument matrix lives in internal/cli. This covers the transport.
 	useSocket(t, statusTimeout)
 	var out, errOut bytes.Buffer
 	if code := realMain([]string{"ip"}, forbiddenInput{t}, &out, &errOut); code != 1 || out.Len() != 0 || errOut.Len() == 0 {

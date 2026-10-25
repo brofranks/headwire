@@ -16,6 +16,8 @@ updates:
       # Update the fork alongside tailscale.com.
       - dependency-name: github.com/tailscale/wireguard-go
         versions: ['>= 0.0.1']
+      # The fork pins the Wintun helpers too, and its Windows code links them.
+      - dependency-name: golang.zx2c4.com/wireguard/windows
   - package-ecosystem: gomod
     directory: /tools/check
     schedule:

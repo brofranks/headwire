@@ -51,8 +51,9 @@ grep -qE "$dataplane" <<< "$(go list -deps ./cmd/headwire)" ||
     die 'the data-plane pattern no longer matches cmd/headwire.'
 # Type-check every host's tagged source. Cgo-only bridge/apple, including
 # its ios slice, needs the native macOS run above and bridge/apple/build.sh.
+# -trimpath matches release.sh, whose arm64 builds then reuse these packages.
 for os in linux darwin windows; do
-    GOOS=$os GOARCH=arm64 CGO_ENABLED=0 go vet ./...
+    GOOS=$os GOARCH=arm64 CGO_ENABLED=0 go vet -trimpath ./...
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 "$work/staticcheck" ./...
     if grep -qE "$dataplane" <<< "$(GOOS=$os GOARCH=arm64 go list -deps ./internal/cli)"; then
         die "internal/cli links the data plane on $os."

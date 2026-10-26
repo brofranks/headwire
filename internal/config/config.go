@@ -33,6 +33,9 @@ type Config struct {
 type Region struct {
 	ID    int
 	Nodes []string
+	// Addrs, if set, holds each node's resolved addresses in Nodes order, so
+	// relay dials need no DNS. It is not a configuration key.
+	Addrs [][]netip.Addr
 }
 
 // Label names the region for status and diagnostics: its ID and node hostnames.

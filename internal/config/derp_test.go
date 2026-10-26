@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"testing"
 )
 
@@ -22,5 +23,23 @@ func TestDERPMapLabels(t *testing.T) {
 			}
 			names[node.Name] = true
 		}
+	}
+}
+
+func TestDERPMapAddrs(t *testing.T) {
+	cfg := &Config{Regions: map[int]Region{1: {
+		ID:    1,
+		Nodes: []string{"both.example", "v6.example"},
+		Addrs: [][]netip.Addr{
+			{netip.MustParseAddr("::ffff:192.0.2.1"), netip.MustParseAddr("2001:db8::1")},
+			{netip.MustParseAddr("2001:db8::2")},
+		},
+	}}}
+	nodes := cfg.DERPMap().Regions[1].Nodes
+	if n := nodes[0]; n.IPv4 != "192.0.2.1" || n.IPv6 != "2001:db8::1" || n.HostName != "both.example" {
+		t.Fatalf("node %+v", n)
+	}
+	if n := nodes[1]; n.IPv4 != "none" || n.IPv6 != "2001:db8::2" {
+		t.Fatalf("node %+v", n)
 	}
 }

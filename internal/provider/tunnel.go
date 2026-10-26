@@ -1,10 +1,11 @@
-// Package apple is the lifecycle behind the C ABI in bridge/apple: an Apple
-// NetworkExtension provider prepares a configuration, applies the
-// returned settings to the system, then starts the engine on the utun
-// descriptor the system gave it.
-package apple
+// Package provider is the lifecycle behind the C ABIs in bridge/apple and
+// bridge/android: a host app prepares a configuration, applies the returned
+// settings to the system, then starts the engine on the tunnel descriptor
+// the system gave it.
+package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -32,6 +33,7 @@ type Settings struct {
 }
 
 // Prefix carries both spellings: IPv4 settings want Mask, IPv6 want Bits.
+// Android reads Bits for both families and ignores Mask.
 type Prefix struct {
 	Address string `json:"address"`
 	Mask    string `json:"mask,omitempty"`
@@ -89,14 +91,48 @@ func Prepare(c *config.Config) (int32, *Settings, error) {
 	return handle, s, nil
 }
 
+// Resolve replaces each peer Endpoint hostname and DERP node hostname in c
+// with its addresses, so the engine needs no DNS once the tunnel's routes,
+// which may carry the host's DNS, exist. The addresses stay fixed for the
+// session.
+func Resolve(c *config.Config) error {
+	for i, p := range c.Peers {
+		if p.Endpoint == "" {
+			continue
+		}
+		a, err := net.ResolveUDPAddr("udp", p.Endpoint)
+		if err != nil {
+			return fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
+		}
+		c.Peers[i].Endpoint = netip.AddrPortFrom(a.AddrPort().Addr().Unmap(), uint16(a.Port)).String()
+	}
+	for id, r := range c.Regions {
+		r.Addrs = nil
+		for _, host := range r.Nodes {
+			addrs, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
+			if err != nil {
+				return fmt.Errorf("region %s: %w", r.Label(), err)
+			}
+			r.Addrs = append(r.Addrs, addrs)
+		}
+		c.Regions[id] = r
+	}
+	return nil
+}
+
 // Start runs the engine for a prepared handle on dev, which the engine owns
-// from here on. A failed start keeps the handle until Stop.
-func Start(h int32, dev tun.Device, logf logger.Logf) error {
+// from here on. arm, if set, installs the host's process-wide hooks once h is
+// known to hold the session and before the engine binds its first socket. A
+// failed start keeps the handle until Stop.
+func Start(h int32, dev tun.Device, logf logger.Logf, arm func()) error {
 	mu.Lock()
 	defer mu.Unlock()
-	if h != handle || eng != nil {
+	if h == 0 || h != handle || eng != nil {
 		dev.Close()
 		return fmt.Errorf("handle %d is not prepared", h)
+	}
+	if arm != nil {
+		arm()
 	}
 	e, err := engine.Start(cfg, logf, engine.Options{Tun: dev})
 	if err != nil {
@@ -118,23 +154,39 @@ func Status(h int32, field string) (string, error) {
 	return eng.Status(field)
 }
 
-func NetworkChanged(h int32) {
+// NetworkChanged applies update, which records the host's process-wide
+// network state, for a prepared or running handle, then has a running engine
+// rebind. Any other handle is an error and leaves the state alone.
+func NetworkChanged(h int32, update func() error) error {
 	mu.Lock()
 	defer mu.Unlock()
-	if h == handle && eng != nil {
+	if h == 0 || h != handle {
+		return fmt.Errorf("handle %d is not prepared", h)
+	}
+	if err := update(); err != nil {
+		return err
+	}
+	if eng != nil {
 		eng.NetworkChanged()
 	}
+	return nil
 }
 
-// Stop releases a handle in either state.
-func Stop(h int32) {
+// Stop releases a handle in either state and reports whether h held the
+// session. disarm, if set, removes the hooks Start installed once the engine
+// has closed.
+func Stop(h int32, disarm func()) bool {
 	mu.Lock()
 	defer mu.Unlock()
-	if h != handle {
-		return
+	if h == 0 || h != handle {
+		return false
 	}
 	if eng != nil {
 		eng.Close()
 	}
+	if disarm != nil {
+		disarm()
+	}
 	handle, cfg, eng = 0, nil, nil
+	return true
 }

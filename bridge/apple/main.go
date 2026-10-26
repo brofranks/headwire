@@ -34,9 +34,9 @@ import (
 	"os"
 	"unsafe"
 
-	"brof.dev/headwire/internal/apple"
 	"brof.dev/headwire/internal/cli"
 	"brof.dev/headwire/internal/config"
+	"brof.dev/headwire/internal/provider"
 	"tailscale.com/net/netmon"
 )
 
@@ -70,7 +70,7 @@ func guard(f func() error) (out *C.char) {
 // prepare is the HeadwirePrepare* entry point of this platform, given its
 // loaded configuration.
 func prepare(cfg *config.Config, handle *C.int32_t, settings **C.char) error {
-	h, s, err := apple.Prepare(cfg)
+	h, s, err := provider.Prepare(cfg)
 	if err != nil {
 		return err
 	}
@@ -85,18 +85,18 @@ func prepare(cfg *config.Config, handle *C.int32_t, settings **C.char) error {
 //export HeadwireStart
 func HeadwireStart(handle, fd C.int32_t) *C.char {
 	return guard(func() error {
-		dev, err := apple.OpenTun(int(fd))
+		dev, err := provider.OpenTun(int(fd))
 		if err != nil {
 			return err
 		}
-		return apple.Start(int32(handle), dev, logf)
+		return provider.Start(int32(handle), dev, logf, nil)
 	})
 }
 
 //export HeadwireStatus
 func HeadwireStatus(handle C.int32_t, field *C.char, out **C.char) *C.char {
 	return guard(func() error {
-		s, err := apple.Status(int32(handle), C.GoString(field))
+		s, err := provider.Status(int32(handle), C.GoString(field))
 		if err != nil {
 			return err
 		}
@@ -111,15 +111,16 @@ func HeadwireNetworkChanged(handle C.int32_t, ifname *C.char) {
 		// NetworkExtension sets the delegate interface once, at tunnel
 		// creation, so netns would keep binding to the one that went away.
 		// The name is process-wide, so a prepared handle records it too.
-		netmon.UpdateLastKnownDefaultRouteInterface(C.GoString(ifname))
-		apple.NetworkChanged(int32(handle))
-		return nil
+		return provider.NetworkChanged(int32(handle), func() error {
+			netmon.UpdateLastKnownDefaultRouteInterface(C.GoString(ifname))
+			return nil
+		})
 	})
 }
 
 //export HeadwireStop
 func HeadwireStop(handle C.int32_t) {
-	guard(func() error { apple.Stop(int32(handle)); return nil })
+	guard(func() error { provider.Stop(int32(handle), nil); return nil })
 }
 
 // appProgram holds the tunnel verbs Headwire.app dispatches itself. They

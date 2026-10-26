@@ -229,10 +229,34 @@ jobs:
             Get-Content $log
           }
 
+  # The Android library needs the NDK the Linux runner preinstalls. It gates
+  # a release but is not one of its assets: the app repository builds it into
+  # the APK.
+  build-android:
+    needs: build
+    runs-on: ubuntu-26.04
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build libheadwire.so
+        run: bridge/android/build.sh dist/android
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android
+          path: dist/android/
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     environment: release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [build, test-macos, test-windows, verify-macos, verify-windows]
+    needs: [build, test-macos, test-windows, verify-macos, verify-windows, build-android]
     runs-on: ubuntu-26.04
     permissions:
       contents: write

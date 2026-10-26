@@ -43,16 +43,18 @@ if [ -s "$work/format.diff" ]; then
 fi
 go vet ./...
 "$work/staticcheck" ./...
-# The client commands must not link the data plane. cmd/headwire and
-# bridge/apple add the engine on top of them. The daemon's own list proves
-# the pattern still names those packages.
+# The client commands must not link the data plane. cmd/headwire,
+# bridge/apple and bridge/android add the engine on top of them. The daemon's
+# own list proves the pattern still names those packages.
 dataplane='wgengine|net/tstun|gvisor\.dev'
 grep -qE "$dataplane" <<< "$(go list -deps ./cmd/headwire)" ||
     die 'the data-plane pattern no longer matches cmd/headwire.'
-# Type-check every host's tagged source. Cgo-only bridge/apple, including
-# its ios slice, needs the native macOS run above and bridge/apple/build.sh.
-# -trimpath matches release.sh, whose arm64 builds then reuse these packages.
-for os in linux darwin windows; do
+# Type-check every host's tagged source. The cgo-only bridges drop out of
+# ./... here: bridge/apple, including its ios slice, needs the native macOS
+# run above and bridge/apple/build.sh, and bridge/android needs the NDK and
+# bridge/android/build.sh. -trimpath matches release.sh, whose arm64 builds
+# then reuse these packages.
+for os in linux darwin windows android; do
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 go vet -trimpath ./...
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 "$work/staticcheck" ./...
     if grep -qE "$dataplane" <<< "$(GOOS=$os GOARCH=arm64 go list -deps ./internal/cli)"; then

@@ -11,7 +11,7 @@ require (
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
 	golang.org/x/sys v0.49.0
 	golang.zx2c4.com/wireguard/windows v1.0.1
-	tailscale.com v1.104.4
+	tailscale.com v1.104.5
 )
 
 require (
@@ -59,4 +59,4 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.4-headwire.1
+replace tailscale.com => github.com/brofranks/tailscale v1.104.5-headwire.1

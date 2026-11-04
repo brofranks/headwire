@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"tailscale.com/tstest"
-
 	"brof.dev/headwire/internal/config"
 	"brof.dev/headwire/internal/discokey"
 	"tailscale.com/ipn/ipnstate"
@@ -87,18 +85,6 @@ func freePort(t *testing.T) uint16 {
 	return 0
 }
 
-func startEcho(t *testing.T, cfg *config.Config) *Engine {
-	t.Helper()
-	e, err := Start(cfg, tstest.WhileTestRunningLogger(t), Options{Netstack: true, TCPHandler: func(c net.Conn) {
-		echo(context.Background(), c)
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(e.Close)
-	return e
-}
-
 // dualStack gives both nodes an IPv6 overlay address and routes it to the
 // other.
 func dualStack(ac, bc *config.Config) {
@@ -108,7 +94,7 @@ func dualStack(ac, bc *config.Config) {
 	bc.Peers[0].AllowedIPs = append(bc.Peers[0].AllowedIPs, ac.Interface.Addresses[1])
 }
 
-func TestFixedAndPassiveNetstackRoundTrip(t *testing.T) {
+func TestFixedAndPassiveRoundTrip(t *testing.T) {
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}
 	// DNS is configured but, without a kernel TUN, applied nowhere.
@@ -145,7 +131,7 @@ func TestFixedAndPassiveNetstackRoundTrip(t *testing.T) {
 
 // TestMasqueradeAddress gives A an exit peer B that knows A only by a
 // masquerade address and a mesh peer C that knows A's interface address. Each
-// drops the other source, and A's netstack accepts replies only to its own
+// drops the other source, and A's stack accepts replies only to its own
 // address, so the round trips establish both rewrites and that B's default
 // route does not masquerade traffic to C. The field is installed at startup
 // or arrives by reload, with either or both overlay address families.
@@ -226,14 +212,14 @@ func TestReloadAddsPeer(t *testing.T) {
 	if err := ea.Reload(a.config(t, "", b, fmt.Sprintf("Endpoint = 127.0.0.1:%d", b.port))); err != nil {
 		t.Fatal(err)
 	}
-	warm(t, ea, eb)
+	warm(t, ea.Engine, eb.Engine)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := dialRoundTripUntil(ctx, ea, netip.AddrPortFrom(b.addr.Addr(), testEchoPort)); err != nil {
 		t.Fatal(err)
 	}
 	text, _ := ea.Status("")
-	if !strings.HasPrefix(text, "interface: netstack\n") {
+	if !strings.HasPrefix(text, "interface: hwtest\n") {
 		t.Fatalf("status did not use the engine's interface name:\n%s", text)
 	}
 	//lint:ignore SA1019 raw keys; see config.EncodeKey.
@@ -432,16 +418,12 @@ func TestReloadPreservesSession(t *testing.T) {
 	r := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.3/32"), freePort(t)}
-	er, err := Start(r.config(t, "", a, fmt.Sprintf("Endpoint = 127.0.0.1:%d", a.port)), t.Logf, Options{Netstack: true, TCPHandler: func(c net.Conn) { defer c.Close(); io.Copy(c, c) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer er.Close()
+	er := startEcho(t, r.config(t, "", a, fmt.Sprintf("Endpoint = 127.0.0.1:%d", a.port)))
 	ea := startEcho(t, a.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
-	warm(t, ea, er)
+	warm(t, ea.Engine, er.Engine)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c, err := ea.ns.DialContextTCP(ctx, netip.AddrPortFrom(r.addr.Addr(), 12345))
+	c, err := ea.stack.dialTCP(ctx, netip.AddrPortFrom(r.addr.Addr(), testEchoPort))
 	if err != nil {
 		t.Fatal(err)
 	}

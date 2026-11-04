@@ -135,7 +135,7 @@ func TestAllowInReload(t *testing.T) {
 	ea := startEcho(t, a.config(t, "", b, fmt.Sprintf("Endpoint = 127.0.0.1:%d", b.port)))
 	target := netip.AddrPortFrom(b.addr.Addr(), testEchoPort)
 
-	warm(t, ea, eb)
+	warm(t, ea.Engine, eb.Engine)
 	denied(t, ea, target, "round trip passed a filter admitting only another destination")
 	if err := eb.Reload(b.config(t, "AllowIn = none", a, fmt.Sprintf("AllowIn = tcp/%d to self", testEchoPort))); err != nil {
 		t.Fatal(err)

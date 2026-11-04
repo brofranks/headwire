@@ -70,7 +70,7 @@ func inRelayOnlyProcess(t *testing.T) bool {
 // startRelayed starts an echo engine using dm, since the configured region only
 // names a host. Forcing the nearest region lets the home connection start
 // before the first netcheck's probe timeout.
-func startRelayed(t *testing.T, dm *tailcfg.DERPMap, self, peer node) *Engine {
+func startRelayed(t *testing.T, dm *tailcfg.DERPMap, self, peer node) *testNode {
 	t.Helper()
 	e := startEcho(t, self.config(t, "HomeDERP = 1\n[DERPRegion]\nID = 1\nNodes = localhost\n", peer, "HomeDERP = 1"))
 	e.mc.SetDERPMap(dm)

@@ -17,9 +17,9 @@ RuntimeDirectoryMode=0700
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=yes
 UMask=0077
-# A DNS line is applied to systemd-resolved over D-Bus, so /etc stays
-# read-only. The engine's resolv.conf modes would need ReadWritePaths=/etc.
+# DNS backends replace resolver files in /etc and keep runtime state in /run.
 ProtectSystem=strict
+ReadWritePaths=/etc /run
 ProtectHome=yes
 PrivateTmp=yes
 DevicePolicy=closed

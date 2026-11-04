@@ -275,6 +275,45 @@ jobs:
       - name: Check checksums
         working-directory: release
         run: sha256sum -c SHA256SUMS
+      - name: Sign RPM packages and update checksums
+        shell: bash
+        working-directory: release
+        env:
+          HEADWIRE_RPM_PRIVATE_KEY: ${{ secrets.HEADWIRE_RPM_PRIVATE_KEY }}
+          # The primary key of contrib/headwire-rpm.asc. A rotation replaces
+          # both together.
+          HEADWIRE_RPM_FINGERPRINT: 3A61FFC599B5AF8E0F5F962B967F48BE8F84F267
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm gnupg
+          umask 077
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          # The private key's removal must not depend on the agent stopping.
+          trap 'gpgconf --kill gpg-agent || :; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s' "$HEADWIRE_RPM_PRIVATE_KEY" | gpg --batch --import
+          fingerprint=$(gpg --batch --with-colons --list-secret-keys "$HEADWIRE_RPM_FINGERPRINT" |
+            awk -F: '$1 == "fpr" { print $10; exit }')
+          test "$fingerprint" = "$HEADWIRE_RPM_FINGERPRINT"
+          test "$(gpg --batch --with-colons --list-secret-keys "$fingerprint" |
+            awk -F: '$1 == "sec" { print $3 ":" $4; exit }')" = 4096:1
+          # The ! suffix selects the primary key, never a signing subkey.
+          rpmsign --addsign \
+            --define '_gpg_name '"$fingerprint!" \
+            --define '_gpg_digest_algo sha256' \
+            --define '__gpg /usr/bin/gpg' \
+            --define '_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback' \
+            ./*.rpm
+          gpg --batch --armor --export "$fingerprint" > "$GNUPGHOME/public.asc"
+          rpm --dbpath "$GNUPGHOME/rpmdb" --import "$GNUPGHOME/public.asc"
+          # The database trusts only the imported key. RPM 6 prints
+          # "signature" where RPM 4 prints "Signature".
+          for package in ./*.rpm; do
+            rpm --dbpath "$GNUPGHOME/rpmdb" --checksig --verbose "$package" |
+              tee "$GNUPGHOME/verification"
+            grep -qi 'RSA/SHA256 signature.*: OK' "$GNUPGHOME/verification"
+          done
+          sha256sum ./*.tar.gz ./*.zip ./*.deb ./*.rpm > SHA256SUMS
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:

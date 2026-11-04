@@ -9,6 +9,15 @@ homepage: https://github.com/brofranks/headwire
 section: net
 priority: optional
 mtime: "1970-01-01T00:00:00Z"
+overrides:
+  deb:
+    depends:
+      - init-system-helpers
+    scripts:
+      postinstall: contrib/deb-postinstall.sh
+  rpm:
+    scripts:
+      postinstall: contrib/rpm-postinstall.sh
 contents:
   - src: ${PACKAGE_DIR}/headwire
     expand: true

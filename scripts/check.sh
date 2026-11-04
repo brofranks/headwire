@@ -31,8 +31,8 @@ PATH="$work/venv/bin:$PATH"
 
 go mod tidy -diff
 go mod verify
-"$work/shfmt" -d scripts bridge
-"$work/shfmt" -f scripts bridge | xargs shellcheck -x -P SCRIPTDIR -P .
+"$work/shfmt" -d scripts bridge contrib
+"$work/shfmt" -f scripts bridge contrib | xargs shellcheck -x -P SCRIPTDIR -P .
 "$work/actionlint" .github/workflows/*
 
 # Include platform-specific source without traversing generated artifacts.

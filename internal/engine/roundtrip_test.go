@@ -17,20 +17,19 @@ import (
 const testEchoPort = 25820
 
 // echo serves ordinary TCP bytes. The test client owns completion and teardown.
-func echo(ctx context.Context, c net.Conn) error {
+func echo(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
-	_, err := io.Copy(c, c)
-	return err
+	io.Copy(c, c)
 }
 
 // warm confirms a disco path in both directions before traffic so a test does
 // not wait out WireGuard's 5 s handshake retry: a peer's handshake response is
 // dropped until its own ping has confirmed an address, and a passive peer
 // learns the initiator's address only from the initiator's ping, so the order
-// matters. TestFixedAndPassiveNetstackRoundTrip stays cold to prove
-// convergence without it.
+// matters. TestFixedAndPassiveRoundTrip stays cold to prove convergence
+// without it.
 func warm(t *testing.T, a, b *Engine) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -56,7 +55,7 @@ func warm(t *testing.T, a, b *Engine) {
 
 // dialRoundTripUntil retries fresh connections while discovery establishes a
 // usable path.
-func dialRoundTripUntil(ctx context.Context, e *Engine, target netip.AddrPort) error {
+func dialRoundTripUntil(ctx context.Context, e *testNode, target netip.AddrPort) error {
 	for {
 		if err := roundTrip(ctx, e, target); err == nil {
 			return nil
@@ -71,7 +70,7 @@ func dialRoundTripUntil(ctx context.Context, e *Engine, target netip.AddrPort) e
 
 // denied fails when a round trip completes within one WireGuard handshake
 // retry, so a merely slow handshake cannot pass for a refusal.
-func denied(t *testing.T, e *Engine, target netip.AddrPort, what string) {
+func denied(t *testing.T, e *testNode, target netip.AddrPort, what string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -80,10 +79,10 @@ func denied(t *testing.T, e *Engine, target netip.AddrPort, what string) {
 	}
 }
 
-func roundTrip(ctx context.Context, e *Engine, target netip.AddrPort) error {
+func roundTrip(ctx context.Context, e *testNode, target netip.AddrPort) error {
 	attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	c, err := e.ns.DialContextTCP(attempt, target)
+	c, err := e.stack.dialTCP(attempt, target)
 	if err != nil {
 		return err
 	}
@@ -109,7 +108,7 @@ func roundTrip(ctx context.Context, e *Engine, target netip.AddrPort) error {
 }
 
 // TestIPv6UnderlayRoundTrip carries the dual-stack overlay over a loopback
-// IPv6 endpoint. TestFixedAndPassiveNetstackRoundTrip covers IPv4.
+// IPv6 endpoint. TestFixedAndPassiveRoundTrip covers IPv4.
 func TestIPv6UnderlayRoundTrip(t *testing.T) {
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}
@@ -118,15 +117,12 @@ func TestIPv6UnderlayRoundTrip(t *testing.T) {
 	dualStack(ac, bc)
 	eb := startEcho(t, bc)
 	e := startEcho(t, ac)
-	warm(t, e, eb)
+	warm(t, e.Engine, eb.Engine)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for _, address := range bc.Interface.Addresses {
 		if err := dialRoundTripUntil(ctx, e, netip.AddrPortFrom(address.Addr(), testEchoPort)); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if mark, _ := e.Status("fwmark"); mark != "off\n" {
-		t.Fatalf("netstack mark: %q", mark)
 	}
 }

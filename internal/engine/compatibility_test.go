@@ -52,7 +52,7 @@ func TestListenPortsAndEquivalentMTU(t *testing.T) {
 	defer hold.Close()
 	cfg := a.parse(t, "", "")
 	cfg.Interface.ListenPort = uint16(hold.LocalAddr().(*net.UDPAddr).Port)
-	if e, err := Start(cfg, tstest.WhileTestRunningLogger(t), Options{Netstack: true}); err == nil {
+	if e, err := startNode(t, cfg, tstest.WhileTestRunningLogger(t)); err == nil {
 		e.Close()
 		t.Fatal("accepted unavailable explicit port")
 	}
@@ -135,15 +135,7 @@ func ordinaryWireGuardTraffic(t *testing.T, underlay string) {
 			case <-ctx.Done():
 				t.Fatal("ordinary peer received no packet")
 			}
-			network := "udp4"
-			if src.Is6() {
-				network = "udp6"
-			}
-			listener, err := e.ns.ListenPacket(network, net.JoinHostPort(src.String(), "12345"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer listener.Close()
+			listener := e.stack.listenUDP(t, netip.AddrPortFrom(src, 12345))
 			deadline, _ := ctx.Deadline()
 			listener.SetReadDeadline(deadline)
 			// A narrower discovery peer owns .3 / ::3, so a packet from
@@ -205,8 +197,8 @@ func TestOrdinaryPeerAdmission(t *testing.T) {
 			startEcho(t, bc)
 			// This exact path must work before authentication changes, and the
 			// sender is recreated so established sessions cannot mask denial.
-			sender := func() *Engine {
-				e, err := Start(ac, tstest.WhileTestRunningLogger(t), Options{Netstack: true})
+			sender := func() *testNode {
+				e, err := startNode(t, ac, tstest.WhileTestRunningLogger(t))
 				if err != nil {
 					t.Fatal(err)
 				}

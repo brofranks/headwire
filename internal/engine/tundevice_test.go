@@ -18,20 +18,6 @@ import (
 	"tailscale.com/types/key"
 )
 
-// defaultRouteAddr is the address the peer endpoint has to use: an injected
-// device leaves netns enabled, which binds the underlay sockets to the default
-// interface, so loopback endpoints never connect. Production wants exactly
-// that, because the underlay must not be routed back into the tunnel.
-func defaultRouteAddr(t *testing.T) netip.Addr {
-	t.Helper()
-	c, err := net.Dial("udp4", "192.0.2.1:9")
-	if err != nil {
-		t.Skipf("no IPv4 default route: %v", err)
-	}
-	defer c.Close()
-	return c.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
-}
-
 // startInjected runs an engine on a packet device the caller owns. No root and
 // no OS router are involved.
 func startInjected(t *testing.T, cfg *config.Config) (*Engine, *tuntest.ChannelTUN) {
@@ -63,7 +49,7 @@ func TestInjectedTunRoundTrip(t *testing.T) {
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}
 	eb, chb := startInjected(t, b.config(t, "", a, "")) // passive
-	ea, cha := startInjected(t, a.config(t, "", b, fmt.Sprintf("Endpoint = %s:%d", defaultRouteAddr(t), b.port)))
+	ea, cha := startInjected(t, a.config(t, "", b, fmt.Sprintf("Endpoint = 127.0.0.1:%d", b.port)))
 	warm(t, ea, eb)
 
 	if ea.tunName != "loopbackTun1" {

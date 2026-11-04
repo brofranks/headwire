@@ -46,17 +46,15 @@ func TestDiscoUpdateSource(t *testing.T) {
 					}
 				}
 			}
-			er, err := Start(cfg, logf, Options{
-				Netstack:   true,
-				TCPHandler: func(c net.Conn) { echo(context.Background(), c) },
-			})
+			er, err := startNode(t, cfg, logf)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer er.Close()
+			er.serve(t, testEchoPort, func(c net.Conn) { echo(context.Background(), c) })
 			startEcho(t, v.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
 			ea := startEcho(t, a.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
-			warm(t, ea, er)
+			warm(t, ea.Engine, er.Engine)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := dialRoundTripUntil(ctx, ea, netip.AddrPortFrom(r.addr.Addr(), testEchoPort)); err != nil {
@@ -133,7 +131,7 @@ func TestPeerAdmission(t *testing.T) {
 			if mode != "unknown" {
 				// Discovery must work before PSK rejection is tested,
 				// so a cold/unreachable path cannot produce a false pass.
-				warm(t, ea, eb)
+				warm(t, ea.Engine, eb.Engine)
 			}
 			target := netip.AddrPortFrom(b.addr.Addr(), testEchoPort)
 			if mode != "correct-psk" {
@@ -155,13 +153,14 @@ func TestRestartRevokesPeer(t *testing.T) {
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.3/32"), freePort(t)}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	er, err := Start(r.config(t, "", a, ""), t.Logf, Options{Netstack: true, TCPHandler: func(c net.Conn) { echo(ctx, c) }})
+	er, err := startNode(t, r.config(t, "", a, ""), t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
+	er.serve(t, testEchoPort, func(c net.Conn) { echo(ctx, c) })
 	ea := startEcho(t, a.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
 	target := netip.AddrPortFrom(r.addr.Addr(), testEchoPort)
-	warm(t, ea, er)
+	warm(t, ea.Engine, er.Engine)
 	if err := dialRoundTripUntil(ctx, ea, target); err != nil {
 		er.Close()
 		t.Fatal(err)
@@ -169,7 +168,7 @@ func TestRestartRevokesPeer(t *testing.T) {
 	er.Close()
 	er = startEcho(t, r.config(t, "", b, ""))
 	eb := startEcho(t, b.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
-	warm(t, eb, er)
+	warm(t, eb.Engine, er.Engine)
 	if err := dialRoundTripUntil(ctx, eb, target); err != nil {
 		t.Fatal("restarted receiver unavailable:", err)
 	}

@@ -155,21 +155,17 @@ func TestReloadSourceOwnership(t *testing.T) {
 	}
 }
 
-// sourceProbe listens for UDP inside dst's netstack. The returned send
+// sourceProbe listens for UDP inside dst's stack. The returned send
 // injects a packet from src into sender's TUN carrying src as its payload,
 // and received reports the first source that reached the stack.
 func sourceProbe(
 	ctx context.Context,
 	t *testing.T,
-	target, sender *Engine,
+	target, sender *testNode,
 	dst netip.Addr,
 ) (send func(netip.Addr), received func() string) {
 	t.Helper()
-	listener, err := target.ns.ListenPacket("udp4", netip.AddrPortFrom(dst, 12345).String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { listener.Close() })
+	listener := target.stack.listenUDP(t, netip.AddrPortFrom(dst, 12345))
 	deadline, _ := ctx.Deadline()
 	if err := listener.SetReadDeadline(deadline); err != nil {
 		t.Fatal(err)
@@ -202,7 +198,7 @@ func TestOverlappingAllowedIPsSourceMatch(t *testing.T) {
 	cfg.Peers[1].AllowedIPs = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}
 	er := startEcho(t, cfg)
 	ea := startEcho(t, sender.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
-	warm(t, ea, er)
+	warm(t, ea.Engine, er.Engine)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := dialRoundTripUntil(ctx, ea, netip.AddrPortFrom(r.addr.Addr(), testEchoPort)); err != nil {
@@ -237,7 +233,7 @@ func TestReloadRejectsRevocationDuringPeerCreation(t *testing.T) {
 		return conf, ok
 	})
 	ea := startEcho(t, sender.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port)))
-	warm(t, ea, er)
+	warm(t, ea.Engine, er.Engine)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	send, received := sourceProbe(ctx, t, er, ea, r.addr.Addr())

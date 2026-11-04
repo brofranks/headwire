@@ -135,7 +135,7 @@ var useSocketMark = netns.UseSocketMark
 
 // fwmark describes the transport sockets, not the tunnel device.
 func (e *Engine) fwmark() string {
-	if runtime.GOOS == "linux" && e.ns == nil && useSocketMark() {
+	if runtime.GOOS == "linux" && useSocketMark() {
 		return fmt.Sprintf("0x%x", tsconst.LinuxBypassMarkNum)
 	}
 	return "off"

@@ -29,22 +29,18 @@ import (
 	"tailscale.com/health"
 	"tailscale.com/net/dns"
 	"tailscale.com/net/netmon"
-	"tailscale.com/net/netns"
 	"tailscale.com/net/routemanager"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/net/tstun"
-	"tailscale.com/proxymap"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/netmap"
-	"tailscale.com/types/nettype"
 	"tailscale.com/util/eventbus"
 	"tailscale.com/util/syspolicy/policyclient"
 	"tailscale.com/util/usermetric"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/magicsock"
-	"tailscale.com/wgengine/netstack"
 	"tailscale.com/wgengine/router"
 	"tailscale.com/wgengine/wgcfg"
 
@@ -57,14 +53,9 @@ import (
 // and Windows names the Wintun adapter Headwire.
 const TUNName = "headwire0"
 
-// Options selects how the engine attaches to the network.
+// Options selects how the engine attaches to the network: a kernel TUN the
+// engine creates, which needs root, unless Tun is set.
 type Options struct {
-	// Netstack runs an in-process TCP/IP stack instead of a kernel TUN.
-	// Netstack needs no privileges, TUN mode needs root.
-	Netstack bool
-	// TCPHandler serves inbound tunnel TCP flows addressed to the node
-	// (netstack only).
-	TCPHandler func(net.Conn)
 	// Tun is a packet device the caller already owns, for embedders that
 	// are handed one by the host: an Apple NetworkExtension provider gets a
 	// utun descriptor it cannot ask the engine to create. The engine then
@@ -85,8 +76,6 @@ type Engine struct {
 	eng    wgengine.Engine
 	tun    *tstun.Wrapper
 	mc     *magicsock.Conn
-	dns    *dns.Manager
-	ns     *netstack.Impl // nil in TUN mode
 
 	hostDNS dns.OSConfigurator // set when a kernel TUN has DNS
 	unwatch func()             // stops the link-change DNS re-apply
@@ -111,7 +100,7 @@ type state struct {
 
 // Start brings the node up. Close releases it.
 func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err error) {
-	e := &Engine{logf: logf, tunName: "netstack"}
+	e := &Engine{logf: logf}
 	defer func() {
 		if err != nil {
 			e.Close()
@@ -143,34 +132,23 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 				e.tun = s
 			case *magicsock.Conn:
 				e.mc = s
-			case *dns.Manager:
-				e.dns = s
 			}
 		},
 	}
-	switch {
-	case opts.Netstack:
-		// Nothing on the host needs to route around a tunnel that isn't there.
-		netns.SetEnabled(false)
-	case opts.Tun != nil:
+	if opts.Tun != nil {
 		conf.Tun = opts.Tun
 		if e.tunName, err = opts.Tun.Name(); err != nil {
 			return nil, err
 		}
-	default:
-		if err := e.kernelTUN(cfg, tracker, &conf); err != nil {
-			return nil, err
-		}
+	} else if err := e.kernelTUN(cfg, tracker, &conf); err != nil {
+		return nil, err
 	}
-	// The setting is process-wide and netstack has no interface to name.
-	if !opts.Netstack {
-		// netmon otherwise identifies its own tunnel by Tailscale's
-		// interface names and addresses, which Headwire's are not.
-		// Registering it keeps the tunnel out of netmon's link state and
-		// out of the local endpoints magicsock advertises, which would
-		// offer peers a "direct" path through the tunnel itself.
-		netmon.SetTailscaleInterfaceProps(e.tunName, 0)
-	}
+	// netmon otherwise identifies its own tunnel by Tailscale's interface
+	// names and addresses, which Headwire's are not. Registering it keeps the
+	// tunnel out of netmon's link state and out of the local endpoints
+	// magicsock advertises, which would offer peers a "direct" path through
+	// the tunnel itself. The setting is process-wide.
+	netmon.SetTailscaleInterfaceProps(e.tunName, 0)
 	if e.eng, err = wgengine.NewUserspaceEngine(logf, conf); err != nil {
 		return nil, err
 	}
@@ -183,23 +161,6 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	// cannot detect an IPv6-only fallback.
 	if port := cfg.Interface.ListenPort; port != 0 && e.mc.LocalPort() != port {
 		return nil, fmt.Errorf("UDP port %d: address already in use", port)
-	}
-	if opts.Netstack {
-		if e.ns, err = netstack.Create(logf, e.tun, e.eng, e.mc, e.dialer, e.dns, new(proxymap.Mapper)); err != nil {
-			return nil, err
-		}
-		e.ns.ProcessLocalIPs = true
-		// A flow no handler claims is refused: netstack would otherwise
-		// forward it to the host, rewriting this node's address to loopback.
-		e.ns.GetTCPHandlerForFlow = func(src, dst netip.AddrPort) (func(net.Conn), bool) {
-			return opts.TCPHandler, true
-		}
-		e.ns.GetUDPHandlerForFlow = func(src, dst netip.AddrPort) (func(nettype.ConnPacketConn), bool) {
-			return nil, true
-		}
-		if err := e.ns.Start(nil); err != nil {
-			return nil, err
-		}
 	}
 	// The wrapper buffers all traffic until told the stack above it is ready.
 	e.tun.Start()
@@ -222,9 +183,6 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	}
 	e.mc.SetNetworkMap(st.nm.SelfNode, st.nm.Peers)
 	e.eng.SetSelfNode(st.nm.SelfNode)
-	if e.ns != nil {
-		e.ns.UpdateNetstackIPs(st.nm)
-	}
 	e.mc.SetNetworkUp(true)
 	e.eng.SetPeerConfigFunc(e.peerConfig)
 	e.eng.SetPeerByIPPacketFunc(e.peerByIP)
@@ -356,8 +314,7 @@ func (e *Engine) reconfig(cfg *config.Config) error {
 // answers for. The configured prefix sizes the interface's subnet, which
 // Routes carries. Everywhere else a subnet claims addresses that belong to
 // peers. The engine loops packets sent to a local address back into the host
-// on darwin instead of the tunnel, and netstack treats the rest of a
-// registered subnet as on-link with no route to it.
+// on darwin instead of the tunnel.
 func hostAddrs(addrs []netip.Prefix) []netip.Prefix {
 	out := make([]netip.Prefix, len(addrs))
 	for i, a := range addrs {
@@ -483,9 +440,6 @@ func (e *Engine) Reload(cfg *config.Config) error {
 	if err := e.reconfig(cfg); err != nil && !errors.Is(err, wgengine.ErrNoChanges) {
 		return &ReloadApplyError{Err: err}
 	}
-	if e.ns != nil {
-		e.ns.UpdateNetstackIPs(st.nm)
-	}
 	if len(e.eps) > 0 {
 		go e.advertiseEndpoints(e.eps)
 	}
@@ -494,9 +448,6 @@ func (e *Engine) Reload(cfg *config.Config) error {
 
 // Close tears the node down in reverse dependency order.
 func (e *Engine) Close() {
-	if e.ns != nil {
-		e.ns.Close()
-	}
 	if e.hostDNS != nil {
 		e.unwatch()
 		e.hostDNS.Close()

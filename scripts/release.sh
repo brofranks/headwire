@@ -52,7 +52,7 @@ for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 
     mkdir "$package"
     binary=headwire
     [[ $GOOS != windows ]] || binary=headwire.exe
-    go build -trimpath -ldflags="-X brof.dev/headwire/internal/cli.version=$version" -o "$package/$binary" ./cmd/headwire
+    go build -trimpath -ldflags="-s -w -X brof.dev/headwire/internal/cli.version=$version" -o "$package/$binary" ./cmd/headwire
     collect_notices ./cmd/headwire "$package"
     cp LICENSE README.md contrib/headwire.conf.example "$package/"
     # The systemd unit and the native packages are Linux-only.

@@ -2,8 +2,9 @@
 
 // The C ABI an Apple NetworkExtension provider links, built with
 // -buildmode=c-archive by build.sh. include/headwire_bridge.h is the contract.
-// Every function returns NULL or an error string the caller frees with
-// HeadwireFree. Panics are contained because they would take the provider down.
+// Functions returning error strings return NULL on success. The caller frees
+// returned strings with HeadwireFree. Void exports free guard errors internally.
+// Panics are contained because they would take the provider down.
 package main
 
 /*
@@ -107,7 +108,7 @@ func HeadwireStatus(handle C.int32_t, field *C.char, out **C.char) *C.char {
 
 //export HeadwireNetworkChanged
 func HeadwireNetworkChanged(handle C.int32_t, ifname *C.char) {
-	guard(func() error {
+	HeadwireFree(guard(func() error {
 		// NetworkExtension sets the delegate interface once, at tunnel
 		// creation, so netns would keep binding to the one that went away.
 		// The name is process-wide, so a prepared handle records it too.
@@ -115,12 +116,12 @@ func HeadwireNetworkChanged(handle C.int32_t, ifname *C.char) {
 			netmon.UpdateLastKnownDefaultRouteInterface(C.GoString(ifname))
 			return nil
 		})
-	})
+	}))
 }
 
 //export HeadwireStop
 func HeadwireStop(handle C.int32_t) {
-	guard(func() error { provider.Stop(int32(handle), nil); return nil })
+	HeadwireFree(guard(func() error { provider.Stop(int32(handle), nil); return nil }))
 }
 
 // appProgram holds the tunnel verbs Headwire.app dispatches itself. They

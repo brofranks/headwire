@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/tailscale/go-winio"
+	"github.com/Microsoft/go-winio"
 )
 
 // socketPath is the named pipe a running node serves its status on. Only

@@ -3,9 +3,9 @@ module brof.dev/headwire
 go 1.27.3
 
 require (
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca
 	github.com/gaissmai/bart v0.30.0
-	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
@@ -38,6 +38,7 @@ require (
 	github.com/mdlayher/netlink v1.11.2 // indirect
 	github.com/mdlayher/socket v0.7.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
+	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/netlink v1.1.1-0.20240822203006-4d49adab4de7 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect

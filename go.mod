@@ -1,18 +1,18 @@
 module brof.dev/headwire
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca
 	github.com/gaissmai/bart v0.30.0
-	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226
+	github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
 	golang.org/x/sys v0.49.0
 	golang.zx2c4.com/wireguard/windows v1.0.1
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72
-	tailscale.com v1.104.5
+	tailscale.com v1.104.6
 )
 
 require (
@@ -51,4 +51,4 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.5-headwire.1
+replace tailscale.com => github.com/brofranks/tailscale v1.104.6-headwire.1

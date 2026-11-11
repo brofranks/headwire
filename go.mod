@@ -1,14 +1,14 @@
 module brof.dev/headwire
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/gaissmai/bart v0.30.0
-	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226
+	github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
 	golang.org/x/sys v0.49.0
-	tailscale.com v1.104.5
+	tailscale.com v1.104.6
 )
 
 require (
@@ -33,7 +33,7 @@ require (
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/jsimonetti/rtnetlink v1.4.2 // indirect
 	github.com/kamstrup/intmap v0.5.2 // indirect
-	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/mdlayher/netlink v1.11.2 // indirect
 	github.com/mdlayher/socket v0.7.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
@@ -59,4 +59,4 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.5-headwire.1
+replace tailscale.com => github.com/brofranks/tailscale v1.104.6-headwire.1

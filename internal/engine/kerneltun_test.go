@@ -66,6 +66,19 @@ func TestKernelTUN(t *testing.T) {
 		}
 	}
 	configurator(nil, nil)
+	*rec = recordingDNS{}
+	createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
+	searchOnly, err := Start(a.parse(t, "DNS = corp.example", ""), logf, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if searchOnly.hostDNS != nil {
+		t.Fatal("search-only DNS configured a host resolver")
+	}
+	searchOnly.Close()
+	if rec.closed {
+		t.Fatal("search-only DNS closed a host resolver")
+	}
 	useSocketMark = func() bool { return true }
 	// Only Linux marks the transport sockets.
 	wantMark := "off\n"

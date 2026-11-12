@@ -81,8 +81,9 @@ type Engine struct {
 	hostDNS dns.OSConfigurator // set when a kernel TUN has DNS
 	unwatch func()             // stops the link-change DNS re-apply
 
-	mu  sync.Mutex       // serializes Reload and guards eps
-	eps []netip.AddrPort // last advertised endpoints
+	mu    sync.Mutex       // serializes Reload
+	epsMu sync.Mutex       // guards eps
+	eps   []netip.AddrPort // last advertised endpoints
 }
 
 // state is one immutable view of the configuration. Reload swaps it whole
@@ -445,8 +446,8 @@ func (e *Engine) Reload(cfg *config.Config) error {
 	if err := e.reconfig(cfg); err != nil && !errors.Is(err, wgengine.ErrNoChanges) {
 		return &ReloadApplyError{Err: err}
 	}
-	if len(e.eps) > 0 {
-		go e.advertiseEndpoints(e.eps)
+	if eps := e.endpoints(); len(eps) > 0 {
+		go e.advertiseEndpoints(eps)
 	}
 	return nil
 }
@@ -626,10 +627,10 @@ func (e *Engine) onStatus(st *wgengine.Status, err error) {
 	}
 	slices.SortFunc(eps, netip.AddrPort.Compare)
 	eps = slices.Compact(eps)
-	e.mu.Lock()
+	e.epsMu.Lock()
 	changed := !slices.Equal(eps, e.eps)
 	e.eps = eps
-	e.mu.Unlock()
+	e.epsMu.Unlock()
 	if changed && len(eps) > 0 {
 		go e.advertiseEndpoints(eps)
 	}

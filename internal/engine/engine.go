@@ -382,11 +382,12 @@ type ReloadApplyError struct{ Err error }
 func (e *ReloadApplyError) Error() string { return "reload partially applied: " + e.Err.Error() }
 
 // Reload applies a changed configuration to the running node: peer additions
-// and updates preserve existing sessions. Source-permission revocations,
-// including peer removal and ownership transfers, require restart, because the
-// pinned engine can apply a stale lazy peer config after a sync. Only [Peer]
-// sections and AllowIn may change. Other [Interface] and [DERPRegion] changes
-// are refused and the old configuration stays live.
+// and updates preserve existing sessions. Changes to an existing peer's
+// PresharedKey or source permissions, including peer removal and ownership
+// transfers, require restart, because the pinned engine can apply a stale lazy
+// peer config after a sync. Only [Peer] sections and AllowIn may change. Other
+// [Interface] and [DERPRegion] changes are refused and the old configuration
+// stays live.
 func (e *Engine) Reload(cfg *config.Config) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -398,7 +399,11 @@ func (e *Engine) Reload(cfg *config.Config) error {
 		return errors.New("reload can only change [Peer] sections and AllowIn, so restart to apply other [Interface] or [DERPRegion] changes")
 	}
 	for _, p := range cfg.Peers {
-		if was, ok := old.peers[p.PublicKey]; ok && was.WireGuardOnly() != p.WireGuardOnly() {
+		was, ok := old.peers[p.PublicKey]
+		if ok && was.PresharedKey != p.PresharedKey {
+			return fmt.Errorf("peer %s: restart to change PresharedKey", p.PublicKey.ShortString())
+		}
+		if ok && was.WireGuardOnly() != p.WireGuardOnly() {
 			return fmt.Errorf("peer %s: restart to add or remove DiscoKey", p.PublicKey.ShortString())
 		}
 	}
@@ -422,7 +427,6 @@ func (e *Engine) Reload(cfg *config.Config) error {
 		was, existed := old.peers[p.PublicKey]
 		was.AllowIn = p.AllowIn // the filter above already applied it
 		if existed && reflect.DeepEqual(was, p) &&
-			old.allowed[p.PublicKey].Equal(st.allowed[p.PublicKey]) &&
 			slices.Equal(
 				old.nodes[p.PublicKey].Endpoints().AsSlice(),
 				st.nodes[p.PublicKey].Endpoints().AsSlice(),

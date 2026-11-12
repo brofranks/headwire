@@ -77,6 +77,7 @@ type Engine struct {
 	tun    *tstun.Wrapper
 	mc     *magicsock.Conn
 
+	dnsMu   sync.Mutex         // serializes DNS updates and restoration
 	hostDNS dns.OSConfigurator // set when a kernel TUN has DNS
 	unwatch func()             // stops the link-change DNS re-apply
 
@@ -201,7 +202,7 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	// route some public addresses through a forwarder headwire does not run.
 	if e.hostDNS != nil {
 		set := func() error {
-			return e.hostDNS.SetDNS(dns.OSConfig{Nameservers: cfg.Interface.DNS, SearchDomains: cfg.Interface.DNSSearch})
+			return e.setDNS(dns.OSConfig{Nameservers: cfg.Interface.DNS, SearchDomains: cfg.Interface.DNSSearch})
 		}
 		if err := set(); err != nil {
 			return nil, err
@@ -285,9 +286,9 @@ func (e *Engine) kernelTUN(
 		return err
 	}
 	// The process that owns the interface sets the host's DNS. Without a
-	// DNS line no configurator exists, so the host's resolver setup is
+	// nameserver no configurator exists, so the host's resolver setup is
 	// neither probed nor touched.
-	if len(cfg.Interface.DNS)+len(cfg.Interface.DNSSearch) > 0 {
+	if len(cfg.Interface.DNS) > 0 {
 		e.hostDNS, err = newOSConfigurator(e, tracker, dev)
 		e.unwatch = func() {}
 	}
@@ -450,12 +451,25 @@ func (e *Engine) Reload(cfg *config.Config) error {
 	return nil
 }
 
+// setDNS serializes resolver updates with shutdown restoration.
+func (e *Engine) setDNS(c dns.OSConfig) error {
+	e.dnsMu.Lock()
+	defer e.dnsMu.Unlock()
+	if e.hostDNS == nil {
+		return nil
+	}
+	return e.hostDNS.SetDNS(c)
+}
+
 // Close tears the node down in reverse dependency order.
 func (e *Engine) Close() {
+	e.dnsMu.Lock()
 	if e.hostDNS != nil {
 		e.unwatch()
 		e.hostDNS.Close()
+		e.hostDNS = nil
 	}
+	e.dnsMu.Unlock()
 	if e.eng != nil {
 		e.eng.Close()
 	}

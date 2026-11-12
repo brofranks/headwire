@@ -122,7 +122,7 @@ func TestReloadSourceOwnership(t *testing.T) {
 		{"more specific owner", a.peerSection(""), a.peerSection("") + b.peerSection(""), true},
 		{"owner removed", a.peerSection("") + b.peerSection(""), a.peerSection(""), true},
 		{"equal prefix transfer", a.peerSection(""), a.peerSection("") + strings.ReplaceAll(b.peerSection(""), b.addr.String(), a.addr.String()), true},
-		{"expansion", a.peerSection(""), strings.ReplaceAll(a.peerSection(""), "/24", "/23"), false},
+		{"expansion", a.peerSection(""), strings.ReplaceAll(a.peerSection(""), "/24", "/23"), true},
 		{"redundant prefix", a.peerSection(""), strings.ReplaceAll(a.peerSection(""), a.addr.String(), a.addr.String()+", 100.64.0.2/32"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,5 +297,24 @@ func TestIPv6SourceOwnership(t *testing.T) {
 	}
 	if err := st.checkSourceOwnership(&state{allowed: after}); err == nil {
 		t.Fatal("allowed IPv6 revocation")
+	}
+}
+
+func TestReloadPresharedKeyRequiresRestart(t *testing.T) {
+	self := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.1/32")}
+	peer := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.2/32")}
+	before, err := newState(self.config(t, "", peer, ""), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{}
+	e.state.Store(before)
+	next := self.config(t, "", peer, "")
+	next.Peers[0].PresharedKey[0] = 1
+	if err := e.Reload(next); err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Fatalf("PresharedKey change: %v", err)
+	}
+	if e.state.Load() != before {
+		t.Fatal("rejected reload changed state")
 	}
 }

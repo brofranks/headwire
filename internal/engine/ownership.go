@@ -55,16 +55,14 @@ func sourcePermissions(cfg *config.Config) (map[key.NodePublic]*netipx.IPSet, er
 	return allowed, nil
 }
 
-// checkSourceOwnership prevents revocation from racing an in-flight lazy
-// peer creation in the pinned engine. Additive changes are safe:
-// an old config can be more restrictive, but never grants a revoked source.
+// checkSourceOwnership keeps every existing peer's source permissions
+// unchanged, because an in-flight lazy peer creation in the pinned engine can
+// install the previous permissions after reload. A removed peer counts as
+// owning nothing, so removing one that owns no addresses changes nothing.
 func (st *state) checkSourceOwnership(next *state) error {
 	for _, p := range st.cfg.Peers {
-		for _, prefix := range st.allowed[p.PublicKey].Prefixes() {
-			allowed := next.allowed[p.PublicKey]
-			if allowed == nil || !allowed.ContainsPrefix(prefix) {
-				return fmt.Errorf("reload would revoke source ownership from peer %s, so restart to apply AllowedIPs reductions, ownership transfers or peer removal", p.PublicKey.ShortString())
-			}
+		if !st.allowed[p.PublicKey].Equal(cmp.Or(next.allowed[p.PublicKey], new(netipx.IPSet))) {
+			return fmt.Errorf("reload would change source permissions of peer %s, so restart to apply AllowedIPs changes, ownership transfers or peer removal", p.PublicKey.ShortString())
 		}
 	}
 	return nil

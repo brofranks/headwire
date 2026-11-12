@@ -13,6 +13,7 @@ import (
 	"brof.dev/headwire/internal/status"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/types/key"
+	"tailscale.com/wgengine"
 )
 
 func TestStatusRendering(t *testing.T) {
@@ -202,5 +203,42 @@ func TestRejectedStateKeepsIDs(t *testing.T) {
 		if _, err := newState(cfg, nil); err == nil {
 			t.Fatalf("invalid prefixes accepted: %+v", cfg)
 		}
+	}
+}
+
+// TestEndpointsDuringReload checks that endpoint reads and updates do not wait
+// for a reload, which can block on endpoint name resolution.
+func TestEndpointsDuringReload(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*Engine)
+	}{
+		{
+			name: "read",
+			run:  func(e *Engine) { e.endpoints() },
+		},
+		{
+			name: "update",
+			run:  func(e *Engine) { e.onStatus(&wgengine.Status{}, nil) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var e Engine
+			e.mu.Lock() // a reload in progress
+			done := make(chan struct{})
+			t.Cleanup(func() {
+				e.mu.Unlock()
+				<-done
+			})
+			go func() {
+				tc.run(&e)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("endpoints waited for the reload lock")
+			}
+		})
 	}
 }

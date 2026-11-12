@@ -111,9 +111,7 @@ func TestTunnelIsNotAnEndpoint(t *testing.T) {
 	tunnel, lan := a.addr.Addr(), netip.MustParseAddr("192.0.2.10")
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		e.mu.Lock()
-		eps := e.eps
-		e.mu.Unlock()
+		eps := e.endpoints()
 		if slices.ContainsFunc(eps, func(ep netip.AddrPort) bool { return ep.Addr() == tunnel }) {
 			t.Fatalf("endpoints %v include the tunnel's address", eps)
 		}

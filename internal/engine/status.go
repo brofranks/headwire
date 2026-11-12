@@ -212,8 +212,8 @@ type statusView struct {
 
 // endpoints returns the advertised endpoint set.
 func (e *Engine) endpoints() []netip.AddrPort {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.epsMu.Lock()
+	defer e.epsMu.Unlock()
 	return slices.Clone(e.eps)
 }
 

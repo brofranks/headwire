@@ -234,8 +234,9 @@ func derpMap(cfg *config.Config) *tailcfg.DERPMap {
 	return dm
 }
 
-// The kernel device and host DNS need root, so tests replace them.
+// Host checks, the kernel device and DNS need OS access, so tests replace them.
 var (
+	checkHost         = checkKernelConfig
 	createTUN         = tun.CreateTUN
 	newOSConfigurator = func(
 		e *Engine,
@@ -258,6 +259,9 @@ func (e *Engine) kernelTUN(
 	tracker *health.Tracker,
 	conf *wgengine.Config,
 ) (err error) {
+	if err := checkHost(cfg); err != nil {
+		return err
+	}
 	name := TUNName
 	switch runtime.GOOS {
 	case "darwin":

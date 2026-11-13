@@ -17,6 +17,7 @@ import (
 	"tailscale.com/net/netns"
 	"tailscale.com/net/stun/stuntest"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tstest"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/opt"
 )
@@ -139,7 +140,8 @@ func TestProbe(t *testing.T) {
 	defer closeServer()
 	mon := netmon.NewStatic()
 	defer mon.Close()
-	client := &netcheck.Client{NetMon: mon, Logf: t.Logf, SkipExternalNetwork: true}
+	logf := tstest.WhileTestRunningLogger(t)
+	client := &netcheck.Client{NetMon: mon, Logf: logf, SkipExternalNetwork: true}
 	dm := stuntest.DERPMapOf(addr.String())
 	report, err := probe(t.Context(), client, dm)
 	if err != nil {
@@ -155,7 +157,7 @@ func TestProbe(t *testing.T) {
 	}
 	// The command's own fixture (a live network monitor and port mapper)
 	// builds and tears down without sending anything.
-	if _, err := netcheckReport(ctx, dm, t.Logf); !errors.Is(err, context.Canceled) {
+	if _, err := netcheckReport(ctx, dm, logf); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled report: %v", err)
 	}
 }

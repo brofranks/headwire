@@ -77,7 +77,8 @@ func ordinaryWireGuardTraffic(t *testing.T, underlay string) {
 		a.port = freePort(t)
 	}
 	ch := tuntest.NewChannelTUN()
-	wg := device.NewDevice(ch.TUN(), conn.NewDefaultBind(), &device.Logger{Errorf: t.Logf, Verbosef: t.Logf})
+	logf := tstest.WhileTestRunningLogger(t)
+	wg := device.NewDevice(ch.TUN(), conn.NewDefaultBind(), &device.Logger{Errorf: logf, Verbosef: logf})
 	defer wg.Close()
 	psk := [32]byte{1, 2, 3}
 	//lint:ignore SA1019 raw keys; see config.EncodeKey.

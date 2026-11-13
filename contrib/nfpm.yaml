@@ -9,6 +9,10 @@ homepage: https://github.com/brofranks/headwire
 section: net
 priority: optional
 mtime: "1970-01-01T00:00:00Z"
+rpm:
+  requires:
+    post:
+      - /bin/sh
 overrides:
   deb:
     depends:

@@ -56,7 +56,8 @@ grep -qE "$dataplane" <<< "$(go list -deps ./cmd/headwire)" ||
 # then reuse these packages.
 for os in linux darwin windows android; do
     GOOS=$os GOARCH=arm64 CGO_ENABLED=0 go vet -trimpath ./...
-    GOOS=$os GOARCH=arm64 CGO_ENABLED=0 "$work/staticcheck" ./...
+    GOOS=$os GOARCH=arm64 CGO_ENABLED=0 GOFLAGS="$GOFLAGS -trimpath" \
+        "$work/staticcheck" ./...
     if grep -qE "$dataplane" <<< "$(GOOS=$os GOARCH=arm64 go list -deps ./internal/cli)"; then
         die "internal/cli links the data plane on $os."
     fi

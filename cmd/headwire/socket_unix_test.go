@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,5 +32,8 @@ func TestStatusSocketMode(t *testing.T) {
 		if err != nil || fi.Mode().Perm() != want {
 			t.Fatalf("%s: mode = %v, %v; want %04o", path, fi.Mode().Perm(), err, want)
 		}
+	}
+	if _, err := listenStatus(); err == nil || !strings.Contains(err.Error(), "socket in use") {
+		t.Fatalf("second node: %v", err)
 	}
 }

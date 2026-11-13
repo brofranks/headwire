@@ -1,5 +1,3 @@
-//go:build ignore
-
 // Command wintun prints the download URL and SHA-256 of the Wintun release
 // that tailscale.com pins, so release.sh bundles the DLL go.mod's tailscale.com
 // requirement names.

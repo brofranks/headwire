@@ -36,7 +36,7 @@ go mod verify
 "$work/actionlint" .github/workflows/*
 
 # Include platform-specific source without traversing generated artifacts.
-find cmd internal bridge -name '*.go' -exec "$work/goimports" -d {} + > "$work/format.diff"
+find cmd internal bridge scripts -name '*.go' -exec "$work/goimports" -d {} + > "$work/format.diff"
 if [ -s "$work/format.diff" ]; then
     cat "$work/format.diff"
     die 'Run goimports on the files above.'

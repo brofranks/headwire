@@ -39,7 +39,7 @@ GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) GOBIN="$work/bin" \
 
 # The Wintun bindings wireguard-go uses load wintun.dll from the binary's
 # directory. The release is the one tailscale.com's tsconst/wintun pins.
-read -r wintun_url wintun_sha256 < <(go run scripts/wintun.go)
+read -r wintun_url wintun_sha256 < <(go run ./scripts/wintun)
 mkdir "$work/wintun"
 curl -fsSL -o "$work/wintun/release.zip" "$wintun_url"
 sha256sum -c --quiet <<< "$wintun_sha256  $work/wintun/release.zip"

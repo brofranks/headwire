@@ -16,13 +16,14 @@ import (
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/net/stun/stuntest"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tstest"
 	"tailscale.com/types/key"
 )
 
 // localDERP serves one relay region, with DERP and STUN, on loopback.
 func localDERP(t *testing.T) *tailcfg.DERPMap {
 	t.Helper()
-	d := derpserver.New(key.NewNode(), t.Logf)
+	d := derpserver.New(key.NewNode(), tstest.WhileTestRunningLogger(t))
 	srv := httptest.NewUnstartedServer(derpserver.Handler(d))
 	srv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
 	srv.StartTLS()

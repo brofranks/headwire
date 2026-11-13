@@ -153,7 +153,7 @@ func TestRestartRevokesPeer(t *testing.T) {
 	b := node{key.NewNode(), netip.MustParsePrefix("100.64.0.3/32"), freePort(t)}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	er, err := startNode(t, r.config(t, "", a, ""), t.Logf)
+	er, err := startNode(t, r.config(t, "", a, ""), tstest.WhileTestRunningLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

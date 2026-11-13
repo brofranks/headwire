@@ -16,6 +16,7 @@ import (
 	"brof.dev/headwire/internal/discokey"
 	"github.com/tailscale/wireguard-go/tun"
 	"github.com/tailscale/wireguard-go/tun/tuntest"
+	"tailscale.com/tstest"
 	"tailscale.com/types/key"
 )
 
@@ -36,6 +37,13 @@ func write(t *testing.T, allowed string) {
 	if err := os.WriteFile(filepath.Join(config.Dir, "main.conf"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// start is Start with a logger that drops lines arriving after the test,
+// since the engine's background goroutines can log after Stop.
+func start(t *testing.T, h int32, dev tun.Device, arm func()) error {
+	t.Helper()
+	return Start(h, dev, tstest.WhileTestRunningLogger(t), arm)
 }
 
 func TestLifecycle(t *testing.T) {
@@ -72,10 +80,10 @@ func TestLifecycle(t *testing.T) {
 	if err := NetworkChanged(h, update); err != nil || updates != 1 {
 		t.Errorf("NetworkChanged before Start = %v after %d updates", err, updates)
 	}
-	if err := Start(h, tuntest.NewChannelTUN().TUN(), t.Logf, func() { arms++ }); err != nil {
+	if err := start(t, h, tuntest.NewChannelTUN().TUN(), func() { arms++ }); err != nil {
 		t.Fatal(err)
 	}
-	if err := Start(h, tuntest.NewChannelTUN().TUN(), t.Logf, func() { arms++ }); err == nil {
+	if err := start(t, h, tuntest.NewChannelTUN().TUN(), func() { arms++ }); err == nil {
 		t.Error("handle started twice")
 	}
 	if arms != 1 {
@@ -176,7 +184,7 @@ func TestExclusivePreparation(t *testing.T) {
 	if _, _, err := Prepare(cfg); err == nil {
 		t.Fatal("lost reservation")
 	}
-	if err := Start(h, tuntest.NewChannelTUN().TUN(), t.Logf, nil); err != nil {
+	if err := start(t, h, tuntest.NewChannelTUN().TUN(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := Prepare(cfg); err == nil {
@@ -225,7 +233,7 @@ func TestNetworkChangedSerializesStop(t *testing.T) {
 	var ready, done sync.WaitGroup
 	for _, operation := range []func(){
 		func() {
-			if err := Start(h-1, dev, t.Logf, func() { t.Error("stale Start armed hooks") }); err == nil {
+			if err := start(t, h-1, dev, func() { t.Error("stale Start armed hooks") }); err == nil {
 				t.Error("stale Start succeeded")
 			}
 		},
@@ -333,7 +341,7 @@ func TestFailedStartHoldsAdmissionUntilProviderCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { Stop(h, nil) })
-	if err := Start(h, failingNameTun{tuntest.NewChannelTUN().TUN()}, t.Logf, nil); err == nil {
+	if err := start(t, h, failingNameTun{tuntest.NewChannelTUN().TUN()}, nil); err == nil {
 		t.Fatal("start succeeded")
 	}
 	if _, _, err := Prepare(cfg); err == nil {
@@ -359,7 +367,7 @@ func (c closeTun) Close() error {
 
 func TestStartWithoutSession(t *testing.T) {
 	var closed bool
-	if err := Start(0, closeTun{tuntest.NewChannelTUN().TUN(), &closed}, t.Logf, nil); err == nil {
+	if err := start(t, 0, closeTun{tuntest.NewChannelTUN().TUN(), &closed}, nil); err == nil {
 		t.Fatal("start succeeded")
 	}
 	if !closed {

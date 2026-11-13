@@ -17,12 +17,37 @@ import (
 	"tailscale.com/wgengine/router"
 )
 
+// TestKernelTUNHostCheck checks that Start returns a host rejection before
+// creating a TUN.
+func TestKernelTUNHostCheck(t *testing.T) {
+	oldCheck, oldCreate := checkHost, createTUN
+	t.Cleanup(func() { checkHost, createTUN = oldCheck, oldCreate })
+	want := errors.New("unsupported host")
+	checkHost = func(*config.Config) error { return want }
+	createTUN = func(string, int, ...tun.Option) (tun.Device, error) {
+		t.Fatal("created a TUN after host rejection")
+		return nil, nil
+	}
+	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), 0}
+	e, err := Start(a.parse(t, "", ""), tstest.WhileTestRunningLogger(t), Options{})
+	if e != nil {
+		e.Close()
+		t.Fatal("started on an unsupported host")
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("host rejection = %v, want %v", err, want)
+	}
+}
+
 // TestKernelTUN runs Start's default arm on a channel device standing in for
-// the kernel TUN, with a fake OS router and DNS configurator: the real ones
-// need root.
+// the kernel TUN, with fake host checks, an OS router and a DNS configurator.
+// The real device and configurator need root.
 func TestKernelTUN(t *testing.T) {
-	oldCreate, oldDNS, oldMark := createTUN, newOSConfigurator, useSocketMark
-	t.Cleanup(func() { createTUN, newOSConfigurator, useSocketMark = oldCreate, oldDNS, oldMark })
+	oldCheck, oldCreate, oldDNS, oldMark := checkHost, createTUN, newOSConfigurator, useSocketMark
+	t.Cleanup(func() {
+		checkHost, createTUN, newOSConfigurator, useSocketMark = oldCheck, oldCreate, oldDNS, oldMark
+	})
+	checkHost = func(*config.Config) error { return nil }
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), 0}
 	plain, withDNS := a.parse(t, "", ""), a.parse(t, "DNS = 192.0.2.53, example.com", "")
 	device := func(dev tun.Device, err error) func(string, int, ...tun.Option) (tun.Device, error) {

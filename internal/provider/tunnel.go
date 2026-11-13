@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 
 	"brof.dev/headwire/internal/config"
@@ -94,7 +95,9 @@ func Prepare(c *config.Config) (int32, *Settings, error) {
 // Resolve replaces each peer Endpoint hostname and DERP node hostname in c
 // with its addresses, so the engine needs no DNS once the tunnel's routes,
 // which may carry the host's DNS, exist. The addresses stay fixed for the
-// session.
+// session. Endpoint resolution errors are fatal. A DERP node that does not
+// resolve is dropped. Relay resolution fails only when a region that this
+// node or a peer uses as its home has no resolved nodes left.
 func Resolve(c *config.Config) error {
 	for i, p := range c.Peers {
 		if p.Endpoint == "" {
@@ -107,13 +110,22 @@ func Resolve(c *config.Config) error {
 		c.Peers[i].Endpoint = netip.AddrPortFrom(a.AddrPort().Addr().Unmap(), uint16(a.Port)).String()
 	}
 	for id, r := range c.Regions {
-		r.Addrs = nil
-		for _, host := range r.Nodes {
+		r.Addrs = make([][]netip.Addr, len(r.Nodes))
+		var resolved bool
+		var resolveErr error
+		for i, host := range r.Nodes {
 			addrs, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
 			if err != nil {
-				return fmt.Errorf("region %s: %w", r.Label(), err)
+				resolveErr = err
+				continue
 			}
-			r.Addrs = append(r.Addrs, addrs)
+			r.Addrs[i] = addrs
+			resolved = true
+		}
+		home := id == c.Interface.HomeDERP ||
+			slices.ContainsFunc(c.Peers, func(p config.Peer) bool { return p.HomeDERP == id })
+		if !resolved && home {
+			return fmt.Errorf("region %s: %w", r.Label(), resolveErr)
 		}
 		c.Regions[id] = r
 	}

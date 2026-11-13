@@ -19,6 +19,10 @@ func (cfg *Config) DERPMap() *tailcfg.DERPMap {
 			RegionCode: fmt.Sprint(id),
 		}
 		for i, host := range r.Nodes {
+			// Unresolved hosts must not consume the finite STUN probe plan.
+			if r.Addrs != nil && len(r.Addrs[i]) == 0 {
+				continue
+			}
 			n := &tailcfg.DERPNode{
 				Name:     fmt.Sprintf("%d-%d", id, i),
 				RegionID: region.RegionID,

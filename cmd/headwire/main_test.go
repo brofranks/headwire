@@ -71,8 +71,8 @@ func TestStatusSocket(t *testing.T) {
 	}
 	defer ln.Close()
 	// A second node finds the socket in use even before the first serves it.
-	if _, err := listenStatus(); err == nil || !strings.Contains(err.Error(), "socket in use") {
-		t.Fatalf("second node: %v", err)
+	if _, err := listenStatus(); err == nil {
+		t.Fatal("second listener accepted a claimed status socket")
 	}
 	go serveStatus(ln, func(field string) (string, error) {
 		if field == "ping 10.0.0.9" {

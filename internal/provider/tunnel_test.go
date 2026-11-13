@@ -385,8 +385,80 @@ func TestResolve(t *testing.T) {
 	if n.HostName != "localhost" || (n.IPv4 != "127.0.0.1" && n.IPv6 != "::1") {
 		t.Fatalf("node %+v", n)
 	}
-	c.Regions[1] = config.Region{ID: 1, Nodes: []string{"relay.invalid"}}
-	if err := Resolve(c); err == nil || !strings.Contains(err.Error(), "relay.invalid") {
-		t.Fatalf("unresolvable node: %v", err)
+}
+
+func TestResolveRelayFallback(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		nodes []string
+	}{
+		{"failed primary", []string{"relay.invalid", "localhost"}},
+		{"failed backup", []string{"localhost", "relay.invalid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &config.Config{
+				Interface: config.Interface{HomeDERP: 1},
+				Regions: map[int]config.Region{
+					1: {ID: 1, Nodes: tt.nodes},
+					2: {ID: 2, Nodes: []string{"unused.invalid"}},
+				},
+			}
+			if err := Resolve(c); err != nil {
+				t.Fatal(err)
+			}
+			region := c.DERPMap().Regions[1]
+			if len(region.Nodes) != 1 || region.Nodes[0].HostName != "localhost" {
+				t.Fatalf("resolved nodes: %+v", region.Nodes)
+			}
+			if c.Regions[2].Addrs == nil || len(c.DERPMap().Regions[2].Nodes) != 0 {
+				t.Fatal("unused unresolved region retained hostname dialing")
+			}
+		})
+	}
+}
+
+func TestResolveRequiredRegion(t *testing.T) {
+	for _, home := range []string{"self", "peer"} {
+		t.Run(home, func(t *testing.T) {
+			c := &config.Config{
+				Interface: config.Interface{HomeDERP: 1},
+				Regions: map[int]config.Region{
+					1: {ID: 1, Nodes: []string{"localhost"}},
+					2: {ID: 2, Nodes: []string{"first.invalid", "second.invalid"}},
+				},
+			}
+			if home == "self" {
+				c.Interface.HomeDERP = 2
+			} else {
+				c.Peers = []config.Peer{{HomeDERP: 2}}
+			}
+			err := Resolve(c)
+			if err == nil || !strings.Contains(err.Error(), "region "+c.Regions[2].Label()) {
+				t.Fatalf("required region: %v", err)
+			}
+			if _, ok := errors.AsType[*net.DNSError](err); !ok {
+				t.Fatalf("lookup error was not wrapped: %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveEndpointFailure(t *testing.T) {
+	c := &config.Config{
+		Interface: config.Interface{HomeDERP: 1},
+		Regions: map[int]config.Region{
+			1: {ID: 1, Nodes: []string{"localhost"}},
+		},
+		Peers: []config.Peer{{
+			PublicKey: key.NewNode().Public(),
+			Endpoint:  "peer.invalid:51820",
+		}},
+	}
+	err := Resolve(c)
+	if err == nil || !strings.Contains(err.Error(), "peer "+c.Peers[0].PublicKey.ShortString()) {
+		t.Fatalf("endpoint failure: %v", err)
+	}
+	if _, ok := errors.AsType[*net.DNSError](err); !ok {
+		t.Fatalf("lookup error was not wrapped: %v", err)
 	}
 }

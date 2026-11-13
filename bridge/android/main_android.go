@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/netip"
+	"strconv"
 	"sync"
 	"unsafe"
 
@@ -105,6 +107,18 @@ func HeadwirePrepareConfig(text *C.char, handle *C.int32_t, settings **C.char) *
 		// lookups still use the underlay's DNS.
 		if err := provider.Resolve(cfg); err != nil {
 			return err
+		}
+		// Android app UIDs cannot resolve interface names to scope indexes.
+		for _, p := range cfg.Peers {
+			a, _ := netip.ParseAddrPort(p.Endpoint)
+			if zone := a.Addr().Zone(); zone != "" {
+				if _, err := strconv.ParseUint(zone, 10, 32); err != nil {
+					return fmt.Errorf(
+						"peer %s: Android endpoint scope requires a numeric interface index",
+						p.PublicKey.ShortString(),
+					)
+				}
+			}
 		}
 		h, s, err := provider.Prepare(cfg)
 		if err != nil {

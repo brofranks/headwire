@@ -14,7 +14,7 @@
 // HeadwireStart: the tunnel descriptor does not exist until then. A process
 // holds at most one handle: preparing another fails until HeadwireStop. A
 // changed configuration takes effect through stop and start. There is no
-// reload.
+// reload. Scoped IPv6 peer endpoints require numeric interface indexes.
 char *HeadwirePrepareConfig(const char *config, int32_t *handle, char **settings);
 
 // Called from the engine for every socket it opens on the underlay; return

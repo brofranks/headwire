@@ -12,7 +12,7 @@ require (
 	golang.org/x/sys v0.50.0
 	golang.zx2c4.com/wireguard/windows v1.0.1
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72
-	tailscale.com v1.104.6
+	tailscale.com v1.104.7
 )
 
 require (
@@ -51,4 +51,4 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.6-headwire.1
+replace tailscale.com => github.com/brofranks/tailscale v1.104.7-headwire.1

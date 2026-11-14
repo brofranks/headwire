@@ -2,12 +2,13 @@ package engine
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
-	"maps"
 	"net/netip"
 	"slices"
 
 	"brof.dev/headwire/internal/config"
+	"github.com/gaissmai/bart"
 	"go4.org/netipx"
 	"tailscale.com/types/key"
 )
@@ -18,39 +19,47 @@ import (
 // no peer: a default-route peer would otherwise be allowed to send as this
 // node, which only a Linux kernel TUN rejects by itself.
 func sourcePermissions(cfg *config.Config) (map[key.NodePublic]*netipx.IPSet, error) {
-	owners := map[netip.Prefix]key.NodePublic{}
+	var owners bart.Table[key.NodePublic]
 	builders := map[key.NodePublic]*netipx.IPSetBuilder{}
 	for _, p := range cfg.Peers {
 		builders[p.PublicKey] = new(netipx.IPSetBuilder)
 		for _, prefix := range p.AllowedIPs {
-			owners[prefix.Masked()] = p.PublicKey
+			if !prefix.IsValid() {
+				return nil, fmt.Errorf("peer %s has an invalid AllowedIPs prefix", p.PublicKey.ShortString())
+			}
+			owners.Insert(prefix.Masked(), p.PublicKey)
 		}
 	}
-	prefixes := slices.SortedFunc(maps.Keys(owners), func(a, b netip.Prefix) int {
-		return cmp.Or(cmp.Compare(b.Bits(), a.Bits()), a.Compare(b))
-	})
-	var claimed netipx.IPSetBuilder
 	for _, a := range cfg.Interface.Addresses {
-		claimed.Add(a.Addr())
+		if !a.IsValid() {
+			return nil, errors.New("invalid interface address")
+		}
+		owners.Insert(netip.PrefixFrom(a.Addr(), a.Addr().BitLen()), key.NodePublic{})
 	}
-	for _, prefix := range prefixes {
-		used, err := claimed.IPSet()
-		if err != nil {
-			return nil, err
+	var boundaries []netip.Addr
+	for prefix := range owners.All() {
+		boundaries = append(boundaries, prefix.Addr())
+		if next := netipx.PrefixLastIP(prefix).Next(); next.IsValid() {
+			boundaries = append(boundaries, next)
 		}
-		var remaining netipx.IPSetBuilder
-		remaining.AddPrefix(prefix)
-		remaining.RemoveSet(used)
-		set, err := remaining.IPSet()
-		if err != nil {
-			return nil, err
+	}
+	slices.SortFunc(boundaries, netip.Addr.Compare)
+	boundaries = slices.Compact(boundaries)
+	// Ownership is constant between consecutive prefix boundaries.
+	for i, from := range boundaries {
+		owner, ok := owners.Lookup(from)
+		if !ok || owner.IsZero() {
+			continue
 		}
-		builders[owners[prefix]].AddSet(set)
-		claimed.AddPrefix(prefix)
+		to := netipx.PrefixLastIP(netip.PrefixFrom(from, 0))
+		if i+1 < len(boundaries) && boundaries[i+1].BitLen() == from.BitLen() {
+			to = boundaries[i+1].Prev()
+		}
+		builders[owner].AddRange(netipx.IPRangeFrom(from, to))
 	}
 	allowed := make(map[key.NodePublic]*netipx.IPSet, len(builders))
 	for k, b := range builders {
-		allowed[k], _ = b.IPSet() // built only from validated sets
+		allowed[k], _ = b.IPSet() // the sweep adds only ordered same-family ranges
 	}
 	return allowed, nil
 }

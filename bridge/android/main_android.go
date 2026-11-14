@@ -124,10 +124,7 @@ func HeadwirePrepareConfig(text *C.char, handle *C.int32_t, settings **C.char) *
 		if err != nil {
 			return err
 		}
-		js, err := json.Marshal(s)
-		if err != nil {
-			return err
-		}
+		js, _ := json.Marshal(s)
 		*handle, *settings = C.int32_t(h), C.CString(string(js))
 		return nil
 	})

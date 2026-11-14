@@ -6,11 +6,13 @@ import (
 	"net"
 	"net/netip"
 
+	"go4.org/netipx"
 	"tailscale.com/net/netmon"
 )
 
-// Android denies net.Interfaces to app UIDs, so the host app sends the
-// interface list it reads from ConnectivityManager as JSON:
+// hostInterface is one entry of the interface list the Android host app reads
+// from ConnectivityManager and sends as JSON, since Android denies
+// net.Interfaces to app UIDs:
 //
 //	[{"name":"wlan0","index":3,"mtu":1500,"up":true,
 //	  "addresses":["192.168.1.5/24","fe80::1/64"]}]
@@ -40,10 +42,7 @@ func parseInterfaces(js []byte) ([]netmon.Interface, error) {
 			if err != nil {
 				return nil, fmt.Errorf("interfaces: %s: %w", h.Name, err)
 			}
-			addrs = append(addrs, &net.IPNet{
-				IP:   p.Addr().AsSlice(),
-				Mask: net.CIDRMask(p.Bits(), p.Addr().BitLen()),
-			})
+			addrs = append(addrs, netipx.PrefixIPNet(p))
 		}
 		var flags net.Flags
 		if h.Up {

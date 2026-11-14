@@ -18,12 +18,7 @@ for module in tools/check tools/release; do
     go -C "$module" mod tidy -diff
     go -C "$module" mod verify
 done
-GOBIN="$work" go -C tools/check install \
-    golang.org/x/tools/cmd/goimports \
-    honnef.co/go/tools/cmd/staticcheck \
-    golang.org/x/vuln/cmd/govulncheck \
-    mvdan.cc/sh/v3/cmd/shfmt \
-    github.com/rhysd/actionlint/cmd/actionlint
+GOBIN="$work" go -C tools/check install tool
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install -q --require-hashes -r tools/check/requirements.txt
 # actionlint finds shellcheck here for workflow run blocks.

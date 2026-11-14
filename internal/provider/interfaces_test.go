@@ -18,7 +18,9 @@ func TestParseInterfaces(t *testing.T) {
 	}
 	got := map[string]string{}
 	for _, i := range ifs {
-		addrs, err := i.Addrs() // Addrs falls through to the OS, which Android refuses, on a nil AltAddrs.
+		// Addrs falls through to the OS, which Android refuses, on a nil
+		// AltAddrs.
+		addrs, err := i.Addrs()
 		if err != nil || i.AltAddrs == nil {
 			t.Fatalf("%s: Addrs = %v, %v", i.Name, addrs, err)
 		}

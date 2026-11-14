@@ -25,7 +25,11 @@ var badDeps = map[string]string{
 }
 
 func TestIOSDeps(t *testing.T) {
-	deptest.DepChecker{GOOS: "ios", GOARCH: "arm64", BadDeps: badDeps}.Check(t)
+	deptest.DepChecker{
+		GOOS:    "ios",
+		GOARCH:  "arm64",
+		BadDeps: badDeps,
+	}.Check(t)
 }
 
 func TestMacOSDeps(t *testing.T) {

@@ -20,7 +20,11 @@ import (
 func TestSourceOwnership(t *testing.T) {
 	a, b, c := key.NewNode().Public(), key.NewNode().Public(), key.NewNode().Public()
 	peers := []config.Peer{
-		{PublicKey: a, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("10.0.0.7/32")}},
+		{PublicKey: a, AllowedIPs: []netip.Prefix{
+			netip.MustParsePrefix("0.0.0.0/0"),
+			netip.MustParsePrefix("::/0"),
+			netip.MustParsePrefix("10.0.0.7/32"),
+		}},
 		{PublicKey: b, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("10.0.0.128/25")}},
 		{PublicKey: c, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.128/25")}},
 	}
@@ -59,8 +63,137 @@ func TestSourceOwnership(t *testing.T) {
 	if !st.allowed[a].Contains(netip.MustParseAddr("203.0.113.1")) {
 		t.Fatal("default route lost addresses outside the narrower prefixes")
 	}
-	if len(peers[0].AllowedIPs) != 2 || peers[0].AllowedIPs[0].Bits() != 0 {
+	if got, ok := e.peerByIP(netip.MustParseAddr("fe80::1%eth0")); ok {
+		t.Fatalf("zoned destination routed to %v", got)
+	}
+	if len(peers[0].AllowedIPs) != 3 || peers[0].AllowedIPs[0].Bits() != 0 {
 		t.Fatal("configured prefixes were modified")
+	}
+}
+
+func TestSourceOwnershipNestedPrefixes(t *testing.T) {
+	a, b := key.NewNode().Public(), key.NewNode().Public()
+	c, shadowed := key.NewNode().Public(), key.NewNode().Public()
+	cfg := &config.Config{
+		Interface: config.Interface{Addresses: []netip.Prefix{
+			netip.MustParsePrefix("0.0.0.0/0"),
+			netip.MustParsePrefix("255.255.255.255/32"),
+			netip.MustParsePrefix("::/0"),
+			netip.MustParsePrefix("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128"),
+			netip.MustParsePrefix("192.0.2.65/24"),
+			netip.MustParsePrefix("2001:db8::41/64"),
+		}},
+		Peers: []config.Peer{
+			{PublicKey: a, AllowedIPs: []netip.Prefix{
+				netip.MustParsePrefix("0.0.0.0/0"),
+				netip.MustParsePrefix("::/0"),
+				netip.MustParsePrefix("192.0.2.64/26"),
+				netip.MustParsePrefix("2001:db8::40/122"),
+				netip.MustParsePrefix("192.0.2.65/32"),
+				netip.MustParsePrefix("2001:db8::41/128"),
+			}},
+			{PublicKey: b, AllowedIPs: []netip.Prefix{
+				netip.MustParsePrefix("192.0.2.0/24"),
+				netip.MustParsePrefix("2001:db8::/120"),
+			}},
+			{PublicKey: shadowed, AllowedIPs: []netip.Prefix{
+				netip.MustParsePrefix("192.0.2.128/25"),
+				netip.MustParsePrefix("2001:db8::80/121"),
+			}},
+			{PublicKey: c, AllowedIPs: []netip.Prefix{
+				netip.MustParsePrefix("192.0.2.129/25"),
+				netip.MustParsePrefix("2001:db8::81/121"),
+			}},
+		},
+	}
+	sets, err := sourcePermissions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(ip netip.Addr, want key.NodePublic) {
+		t.Helper()
+		for k, set := range sets {
+			if set.Contains(ip) != (k == want) {
+				t.Fatalf("incorrect owner for %s: peer %s", ip, k.ShortString())
+			}
+		}
+	}
+	ipv6 := netip.MustParseAddr("2001:db8::").As16()
+	for i := range 256 {
+		want := b
+		if i == 65 {
+			want = key.NodePublic{}
+		} else if i >= 128 {
+			want = c
+		} else if i >= 64 {
+			want = a
+		}
+		check(netip.AddrFrom4([4]byte{192, 0, 2, byte(i)}), want)
+		ipv6[15] = byte(i)
+		check(netip.AddrFrom16(ipv6), want)
+	}
+	for _, address := range []string{
+		"0.0.0.1", "255.255.255.254", "::1",
+		"ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe",
+	} {
+		check(netip.MustParseAddr(address), a)
+	}
+	for _, prefix := range cfg.Interface.Addresses {
+		check(prefix.Addr(), key.NodePublic{})
+	}
+	if set := sets[shadowed]; set == nil || len(set.Ranges()) != 0 {
+		t.Fatal("fully shadowed peer did not retain an empty source set")
+	}
+	withoutSelf := *cfg
+	withoutSelf.Interface.Addresses = nil
+	sets, err = sourcePermissions(&withoutSelf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range cfg.Interface.Addresses {
+		check(prefix.Addr(), a)
+	}
+}
+
+func sparseOwnershipConfig(tb testing.TB, n int) *config.Config {
+	tb.Helper()
+	cfg := &config.Config{Peers: []config.Peer{{PublicKey: key.NewNode().Public()}}}
+	for i := range n {
+		cfg.Peers[0].AllowedIPs = append(cfg.Peers[0].AllowedIPs,
+			netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(i >> 8), byte(i), 1}), 32))
+	}
+	return cfg
+}
+
+func TestSourceOwnershipSparsePrefixes(t *testing.T) {
+	cfg := sparseOwnershipConfig(t, 4096)
+	sets, err := sourcePermissions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := sets[cfg.Peers[0].PublicKey]
+	if got := len(set.Ranges()); got != len(cfg.Peers[0].AllowedIPs) {
+		t.Fatalf("got %d source ranges, want %d", got, len(cfg.Peers[0].AllowedIPs))
+	}
+	for _, prefix := range cfg.Peers[0].AllowedIPs {
+		ip := prefix.Addr()
+		if !set.Contains(ip) || set.Contains(ip.Prev()) || set.Contains(ip.Next()) {
+			t.Fatalf("incorrect sparse source range for %s", ip)
+		}
+	}
+}
+
+func BenchmarkSourceOwnershipSparse(b *testing.B) {
+	for _, n := range []int{128, 1024, 4096} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := sparseOwnershipConfig(b, n)
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := sourcePermissions(cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

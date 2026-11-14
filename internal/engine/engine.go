@@ -93,6 +93,7 @@ type state struct {
 	peers   map[key.NodePublic]config.Peer
 	nodes   map[key.NodePublic]tailcfg.NodeView // nm.Peers by key
 	allowed map[key.NodePublic]*netipx.IPSet
+	routes  bart.Table[tailcfg.NodeView]
 	nm      *netmap.NetworkMap
 	// ids are the netmap node IDs handed out to peers, including peers since
 	// removed. A peer keeps its ID across reloads: magicsock addresses peers
@@ -534,6 +535,9 @@ func newState(cfg *config.Config, ids map[key.NodePublic]tailcfg.NodeID) (*state
 			return nil, err
 		}
 		st.nodes[p.PublicKey] = n
+		for _, prefix := range p.AllowedIPs {
+			st.routes.Insert(prefix, n)
+		}
 		st.nm.Peers = append(st.nm.Peers, n)
 	}
 	return st, nil
@@ -592,15 +596,10 @@ func (e *Engine) peerByIP(dst netip.Addr) (best key.NodePublic, ok bool) {
 }
 
 func (st *state) peerByIP(dst netip.Addr) (best tailcfg.NodeView, ok bool) {
-	bits := -1
-	for _, n := range st.nm.Peers {
-		for _, pfx := range n.AllowedIPs().All() {
-			if pfx.Contains(dst) && pfx.Bits() >= bits {
-				best, bits, ok = n, pfx.Bits(), true
-			}
-		}
+	if dst.Zone() != "" {
+		return tailcfg.NodeView{}, false
 	}
-	return best, ok
+	return st.routes.Lookup(dst)
 }
 
 // peerForIP is peerByIP for the engine's cold paths (Ping, TSMP), which

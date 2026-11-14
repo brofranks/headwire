@@ -36,8 +36,6 @@ func init() {
 type testStack struct {
 	s      *stack.Stack
 	ep     *channel.Endpoint
-	ctx    context.Context
-	cancel context.CancelFunc
 	events chan tun.Event
 }
 
@@ -71,14 +69,11 @@ func newTestStack(t *testing.T, cfg *config.Config) *testStack {
 		{Destination: gvheader.IPv4EmptySubnet, NIC: 1},
 		{Destination: gvheader.IPv6EmptySubnet, NIC: 1},
 	})
-	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan tun.Event, 1)
 	events <- tun.EventUp
 	return &testStack{
 		s:      s,
 		ep:     ep,
-		ctx:    ctx,
-		cancel: cancel,
 		events: events,
 	}
 }
@@ -105,7 +100,7 @@ func (s *testStack) BatchSize() int           { return 1 }
 
 // Read hands the engine one packet the stack sent.
 func (s *testStack) Read(slab []byte, packets []tun.ReadPacket) (int, error) {
-	pkt := s.ep.ReadContext(s.ctx)
+	pkt := s.ep.ReadContext(context.Background())
 	if pkt == nil {
 		return 0, os.ErrClosed
 	}
@@ -134,7 +129,6 @@ func (s *testStack) Write(bufs [][]byte, offset int) (int, error) {
 }
 
 func (s *testStack) Close() error {
-	s.cancel()
 	s.s.Destroy()
 	close(s.events)
 	return nil

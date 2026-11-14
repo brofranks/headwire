@@ -87,12 +87,28 @@ func TestTunnelIsNotAnEndpoint(t *testing.T) {
 	netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
 		return []netmon.Interface{
 			{
-				Interface: &net.Interface{Index: 1001, MTU: 1500, Name: "eth0", Flags: up},
-				AltAddrs:  []net.Addr{&net.IPNet{IP: net.ParseIP("192.0.2.10"), Mask: net.CIDRMask(24, 32)}},
+				Interface: &net.Interface{
+					Index: 1001,
+					MTU:   1500,
+					Name:  "eth0",
+					Flags: up,
+				},
+				AltAddrs: []net.Addr{&net.IPNet{
+					IP:   net.ParseIP("192.0.2.10"),
+					Mask: net.CIDRMask(24, 32),
+				}},
 			},
 			{
-				Interface: &net.Interface{Index: 1002, MTU: 1280, Name: "hwtest0", Flags: up},
-				AltAddrs:  []net.Addr{&net.IPNet{IP: net.ParseIP("10.99.0.1"), Mask: net.CIDRMask(24, 32)}},
+				Interface: &net.Interface{
+					Index: 1002,
+					MTU:   1280,
+					Name:  "hwtest0",
+					Flags: up,
+				},
+				AltAddrs: []net.Addr{&net.IPNet{
+					IP:   net.ParseIP("10.99.0.1"),
+					Mask: net.CIDRMask(24, 32),
+				}},
 			},
 		}, nil
 	})
@@ -101,7 +117,11 @@ func TestTunnelIsNotAnEndpoint(t *testing.T) {
 		netmon.SetTailscaleInterfaceProps("", 0)
 	})
 
-	a := node{key.NewNode(), netip.MustParsePrefix("10.99.0.1/24"), 0}
+	a := node{
+		key.NewNode(),
+		netip.MustParsePrefix("10.99.0.1/24"),
+		0,
+	}
 	e, err := Start(a.parse(t, "", ""), tstest.WhileTestRunningLogger(t), Options{Tun: namedTun{tuntest.NewChannelTUN().TUN()}})
 	if err != nil {
 		t.Fatal(err)

@@ -214,7 +214,7 @@ type statusView struct {
 func (e *Engine) endpoints() []netip.AddrPort {
 	e.epsMu.Lock()
 	defer e.epsMu.Unlock()
-	return slices.Clone(e.eps)
+	return e.eps
 }
 
 func (v statusView) publicKey() string {

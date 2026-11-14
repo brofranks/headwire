@@ -199,6 +199,7 @@ func TestOrdinaryPeerAdmission(t *testing.T) {
 			// This exact path must work before authentication changes, and the
 			// sender is recreated so established sessions cannot mask denial.
 			sender := func() *testNode {
+				t.Helper()
 				e, err := startNode(t, ac, tstest.WhileTestRunningLogger(t))
 				if err != nil {
 					t.Fatal(err)

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/netip"
 	"testing"
 	"time"
@@ -10,7 +11,11 @@ import (
 	"tailscale.com/net/packet"
 	"tailscale.com/types/ipproto"
 	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
+	"tailscale.com/types/views"
 	"tailscale.com/wgengine/filter"
+
+	"go4.org/netipx"
 
 	"brof.dev/headwire/internal/config"
 )
@@ -80,6 +85,135 @@ func header(proto ipproto.Proto, src, dst netip.Addr) packet.Header {
 		return packet.IP6Header{IPProto: proto, Src: src, Dst: dst}
 	}
 	return packet.IP4Header{IPProto: proto, Src: src, Dst: dst}
+}
+
+func TestFilterGroupsDefaultPolicy(t *testing.T) {
+	cfg := &config.Config{}
+	for i := 2; i <= 16; i++ {
+		cfg.Peers = append(cfg.Peers, config.Peer{
+			PublicKey: key.NewNode().Public(),
+			AllowedIPs: []netip.Prefix{
+				netip.MustParsePrefix(fmt.Sprintf("100.64.0.%d/32", i)),
+				netip.MustParsePrefix(fmt.Sprintf("fd00::%x/128", i)),
+			},
+		})
+	}
+	allowed, err := sourcePermissions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(filterMatches(&state{cfg: cfg, allowed: allowed})); got != 1 {
+		t.Fatalf("default policy emitted %d rules for %d peers, want 1",
+			got, len(cfg.Peers))
+	}
+	f := testFilter(t, cfg)
+	for _, p := range cfg.Peers {
+		for _, source := range p.AllowedIPs {
+			dst := netip.MustParseAddr("192.0.2.1")
+			if source.Addr().Is6() {
+				dst = netip.MustParseAddr("2001:db8::1")
+			}
+			for _, proto := range []ipproto.Proto{ipproto.TCP, ipproto.UDP, ipproto.SCTP, 47, 50} {
+				if got := f.Check(source.Addr(), dst, 65535, proto); got != filter.Accept {
+					t.Errorf("%s protocol %d: %v, want accept", source.Addr(), proto, got)
+				}
+			}
+		}
+	}
+}
+
+func TestFilterGroupsPolicies(t *testing.T) {
+	for _, family := range []struct {
+		self, target string
+		sources      []string
+	}{
+		{
+			self:   "100.64.0.1/24",
+			target: "192.0.2.1/24",
+			sources: []string{
+				"10.0.0.1/8", "10.1.0.1/16", "10.2.0.1/16", "10.3.0.1/16", "10.4.0.1/16",
+			},
+		},
+		{
+			self:   "2001:db8::1/64",
+			target: "2001:db8:ffff::1/64",
+			sources: []string{
+				"fd10::1/16", "fd10:1::1/32", "fd10:2::1/32", "fd10:3::1/32", "fd10:4::1/32",
+			},
+		},
+	} {
+		t.Run(family.self, func(t *testing.T) {
+			self, target := netip.MustParsePrefix(family.self), netip.MustParsePrefix(family.target)
+			toSelf := config.AllowDestination{Kind: config.DestinationSelf}
+			toTarget := config.AllowDestination{Kind: config.DestinationPrefix, Prefix: target.Masked()}
+			cfg := &config.Config{Interface: config.Interface{
+				Addresses: []netip.Prefix{self},
+				AllowIn: []config.AllowRule{
+					{Protos: []uint8{6}, First: 20, Last: 22, Destination: toSelf},
+					{Protos: []uint8{17}, First: 50, Last: 52, Destination: toTarget},
+				},
+			}}
+			var sources []netip.Addr
+			for i, source := range append(family.sources, family.sources[4]) {
+				prefix := netip.MustParsePrefix(source)
+				sources = append(sources, prefix.Addr())
+				p := config.Peer{
+					PublicKey:  key.NewNode().Public(),
+					AllowedIPs: []netip.Prefix{prefix.Masked()},
+				}
+				switch i {
+				case 0:
+					p.AllowedIPs = append(p.AllowedIPs, self.Masked())
+				case 2:
+					p.AllowIn = []config.AllowRule{
+						{Protos: []uint8{17}, First: 50, Last: 52, Destination: toSelf},
+						{Protos: []uint8{6}, First: 20, Last: 22, Destination: toTarget},
+					}
+				case 3, 5:
+					p.AllowIn = []config.AllowRule{}
+				}
+				cfg.Peers = append(cfg.Peers, p)
+			}
+			allowed, err := sourcePermissions(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(filterMatches(&state{cfg: cfg, allowed: allowed})); got != 4 {
+				t.Fatalf("emitted %d distinct rules, want 4", got)
+			}
+			f := testFilter(t, cfg)
+			for _, tt := range []struct {
+				src, dst netip.Addr
+				proto    ipproto.Proto
+				port     uint16
+				want     filter.Response
+			}{
+				{sources[0], self.Addr(), ipproto.TCP, 20, filter.Accept},
+				{sources[1], self.Addr(), ipproto.TCP, 22, filter.Accept},
+				{sources[1], self.Addr(), ipproto.TCP, 19, filter.Drop},
+				{sources[1], self.Addr(), ipproto.TCP, 23, filter.Drop},
+				{sources[1], self.Addr().Next(), ipproto.TCP, 22, filter.Drop},
+				{sources[1], target.Addr(), ipproto.UDP, 50, filter.Accept},
+				{sources[1], target.Addr(), ipproto.UDP, 52, filter.Accept},
+				{sources[1], target.Addr(), ipproto.UDP, 49, filter.Drop},
+				{sources[1], target.Addr(), ipproto.UDP, 53, filter.Drop},
+				{sources[1], self.Addr(), ipproto.UDP, 50, filter.Drop},
+				{sources[1], target.Addr(), ipproto.TCP, 20, filter.Drop},
+				{sources[2], target.Addr(), ipproto.TCP, 20, filter.Accept},
+				{sources[2], self.Addr(), ipproto.UDP, 50, filter.Accept},
+				{sources[2], self.Addr(), ipproto.TCP, 20, filter.Drop},
+				{sources[2], target.Addr(), ipproto.UDP, 50, filter.Drop},
+				{sources[3], self.Addr(), ipproto.TCP, 20, filter.Drop},
+				{sources[4], self.Addr(), ipproto.TCP, 20, filter.Drop},
+				{self.Addr(), self.Addr(), ipproto.TCP, 20, filter.Drop},
+			} {
+				if got := f.Check(tt.src, tt.dst, tt.port, tt.proto); got != tt.want {
+					t.Errorf("%s -> %s protocol %d port %d: %v, want %v",
+						tt.src, tt.dst, tt.proto, tt.port, got, tt.want)
+				}
+			}
+		})
+	}
 }
 
 func TestAllowIn(t *testing.T) {
@@ -329,5 +463,282 @@ func TestAllowInAfterMasquerade(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFilterGroupsSharedSources gives one peer two grants, so two matches
+// start from its sources, and then extends each match with a different peer.
+// Neither extension may leak into the other match.
+func TestFilterGroupsSharedSources(t *testing.T) {
+	ssh := config.AllowRule{Protos: []uint8{6}, First: 22, Last: 22}
+	dns := config.AllowRule{Protos: []uint8{17}, First: 53, Last: 53}
+	cfg := &config.Config{Peers: []config.Peer{
+		{
+			PublicKey:  key.NewNode().Public(),
+			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+			AllowIn:    []config.AllowRule{ssh, dns},
+		},
+		{
+			PublicKey:  key.NewNode().Public(),
+			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.1/32")},
+			AllowIn:    []config.AllowRule{ssh},
+		},
+		{
+			PublicKey:  key.NewNode().Public(),
+			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("192.168.0.1/32")},
+			AllowIn:    []config.AllowRule{dns},
+		},
+	}}
+	allowed, err := sourcePermissions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first peer's set has a hole, so its prefix slice has spare capacity
+	// for an append to write into.
+	if s := allowed[cfg.Peers[0].PublicKey].Prefixes(); cap(s) == len(s) {
+		t.Fatalf("first peer's %d prefixes have no spare capacity", len(s))
+	}
+	f := testFilter(t, cfg)
+	dst := netip.MustParseAddr("192.0.2.1")
+	for _, tt := range []struct {
+		src   string
+		proto ipproto.Proto
+		port  uint16
+		want  filter.Response
+	}{
+		{"10.0.0.2", ipproto.TCP, 22, filter.Accept},
+		{"10.0.0.2", ipproto.UDP, 53, filter.Accept},
+		{"10.0.0.1", ipproto.TCP, 22, filter.Accept},
+		{"10.0.0.1", ipproto.UDP, 53, filter.Drop},
+		{"192.168.0.1", ipproto.UDP, 53, filter.Accept},
+		{"192.168.0.1", ipproto.TCP, 22, filter.Drop},
+	} {
+		if got := f.Check(netip.MustParseAddr(tt.src), dst, tt.port, tt.proto); got != tt.want {
+			t.Errorf("%s protocol %d port %d: %v, want %v", tt.src, tt.proto, tt.port, got, tt.want)
+		}
+	}
+}
+
+// ungroupedMatches is the reference policy: one match per peer per rule, from
+// the sources that peer owns.
+func ungroupedMatches(st *state) []filter.Match {
+	self := hostAddrs(st.cfg.Interface.Addresses)
+	var matches []filter.Match
+	for _, p := range st.cfg.Peers {
+		rules := p.AllowIn
+		if rules == nil {
+			rules = st.cfg.Interface.AllowIn
+		}
+		if rules == nil {
+			rules = []config.AllowRule{{Last: 65535}}
+		}
+		for _, r := range rules {
+			protos := protocols
+			if r.Protos != nil {
+				protos = nil
+				for _, n := range r.Protos {
+					protos = append(protos, ipproto.Proto(n))
+				}
+			}
+			destinations := anyPrefixes
+			switch r.Destination.Kind {
+			case config.DestinationSelf:
+				destinations = self
+			case config.DestinationPrefix:
+				destinations = []netip.Prefix{r.Destination.Prefix}
+			}
+			var dsts []filter.NetPortRange
+			for _, dst := range destinations {
+				ports := filter.PortRange{First: r.First, Last: r.Last}
+				dsts = append(dsts, filter.NetPortRange{Net: dst, Ports: ports})
+			}
+			matches = append(matches, filter.Match{
+				IPProto: views.SliceOf(protos),
+				Srcs:    st.allowed[p.PublicKey].Prefixes(),
+				Dsts:    dsts,
+			})
+		}
+	}
+	return matches
+}
+
+// TestFilterGroupingEquivalence checks that grouped grants admit exactly what
+// the reference policy admits, on randomized configurations whose peers
+// repeat, reorder and override rules.
+func TestFilterGroupingEquivalence(t *testing.T) {
+	selfPrefixes := []netip.Prefix{
+		netip.MustParsePrefix("100.64.0.1/24"),
+		netip.MustParsePrefix("fd00::1/64"),
+	}
+	toSelf := config.AllowDestination{Kind: config.DestinationSelf}
+	to := func(prefix string) config.AllowDestination {
+		return config.AllowDestination{
+			Kind:   config.DestinationPrefix,
+			Prefix: netip.MustParsePrefix(prefix),
+		}
+	}
+	// The pool holds rules as the parser produces them, including pairs that
+	// differ only in protocol, ports or destination.
+	pool := []config.AllowRule{
+		{Last: 65535},
+		{Last: 65535, Destination: toSelf},
+		{Protos: []uint8{6}, Last: 65535},
+		{Protos: []uint8{6}, First: 22, Last: 22},
+		{Protos: []uint8{6}, First: 22, Last: 22, Destination: toSelf},
+		{Protos: []uint8{6}, First: 22, Last: 23},
+		{Protos: []uint8{17}, First: 22, Last: 22},
+		{Protos: []uint8{132}, First: 22, Last: 22},
+		{Protos: []uint8{17}, First: 5000, Last: 5010},
+		{Protos: []uint8{17}, First: 53, Last: 53, Destination: to("192.0.2.0/24")},
+		{Protos: []uint8{17}, First: 53, Last: 53, Destination: to("2001:db8::/64")},
+		{Protos: []uint8{1, 58}, Last: 65535},
+		{Protos: []uint8{47}, Last: 65535},
+		{Protos: []uint8{50}, Last: 65535, Destination: toSelf},
+	}
+	rng := rand.New(rand.NewPCG(3, 4))
+	rules := func() []config.AllowRule {
+		switch rng.IntN(4) {
+		case 0:
+			return nil
+		case 1:
+			return []config.AllowRule{}
+		}
+		var rs []config.AllowRule
+		for range 1 + rng.IntN(3) {
+			rs = append(rs, pool[rng.IntN(len(pool))])
+		}
+		return rs
+	}
+	randomIn := func(base netip.Prefix) netip.Addr {
+		raw := base.Addr().AsSlice()
+		for i := base.Bits() / 8; i < len(raw); i++ {
+			raw[i] = byte(rng.Uint32())
+		}
+		addr, _ := netip.AddrFromSlice(raw)
+		return addr
+	}
+	sourceSpaces := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("fd10::/16"),
+	}
+	for trial := range 12 {
+		cfg := &config.Config{Interface: config.Interface{
+			Addresses: selfPrefixes,
+			AllowIn:   rules(),
+		}}
+		for i := range 6 {
+			p := config.Peer{PublicKey: key.NewNode().Public(), AllowIn: rules()}
+			for _, space := range sourceSpaces {
+				for range 3 {
+					addr := randomIn(space)
+					bits := space.Bits() + rng.IntN(addr.BitLen()-space.Bits()+1)
+					p.AllowedIPs = append(p.AllowedIPs, netip.PrefixFrom(addr, bits))
+				}
+			}
+			switch {
+			case i > 0 && rng.IntN(2) == 0:
+				p.AllowedIPs = append(p.AllowedIPs, cfg.Peers[i-1].AllowedIPs[0])
+			case rng.IntN(4) == 0:
+				p.AllowedIPs = append(p.AllowedIPs, selfPrefixes...)
+			}
+			cfg.Peers = append(cfg.Peers, p)
+		}
+		allowed, err := sourcePermissions(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := &state{cfg: cfg, allowed: allowed}
+		grouped, reference := filterMatches(st), ungroupedMatches(st)
+		if len(grouped) > len(reference) {
+			t.Fatalf("trial %d: %d grouped rules, %d ungrouped",
+				trial, len(grouped), len(reference))
+		}
+		got := filter.New(grouped, nil, allIPs, allIPs, nil, logger.Discard)
+		want := filter.New(reference, nil, allIPs, allIPs, nil, logger.Discard)
+
+		var sources []netip.Addr
+		for _, p := range cfg.Peers {
+			for _, prefix := range p.AllowedIPs {
+				first := prefix.Masked().Addr()
+				sources = append(sources, first, first.Prev(), netipx.PrefixLastIP(prefix))
+			}
+		}
+		for _, prefix := range selfPrefixes {
+			sources = append(sources, prefix.Addr())
+		}
+		for range 16 {
+			sources = append(sources, randomIn(sourceSpaces[rng.IntN(len(sourceSpaces))]))
+		}
+		destinations := map[bool][]netip.Addr{
+			false: {
+				selfPrefixes[0].Addr(),
+				netip.MustParseAddr("192.0.2.1"),
+				netip.MustParseAddr("198.51.100.1"),
+			},
+			true: {
+				selfPrefixes[1].Addr(),
+				netip.MustParseAddr("2001:db8::1"),
+				netip.MustParseAddr("2001:db8:1::1"),
+			},
+		}
+		protos := []ipproto.Proto{ipproto.TCP, ipproto.UDP, ipproto.SCTP, 47, 50}
+		ports := []uint16{0, 21, 22, 23, 24, 53, 4999, 5000, 5010, 5011, 65535}
+		for _, src := range sources {
+			if !src.IsValid() {
+				continue
+			}
+			icmp := ipproto.ICMPv4
+			if src.Is6() {
+				icmp = ipproto.ICMPv6
+			}
+			for _, dst := range destinations[src.Is6()] {
+				for _, proto := range append(protos, icmp) {
+					for _, port := range ports {
+						g, w := got.Check(src, dst, port, proto), want.Check(src, dst, port, proto)
+						if g != w {
+							t.Fatalf("trial %d: %s -> %s protocol %d port %d: %v, want %v",
+								trial, src, dst, proto, port, g, w)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func BenchmarkFilterCheck(b *testing.B) {
+	for _, n := range []int{128, 1024, 4096} {
+		cfg := &config.Config{}
+		for i := range n {
+			cfg.Peers = append(cfg.Peers, config.Peer{
+				PublicKey: key.NewNode().Public(),
+				AllowedIPs: []netip.Prefix{
+					netip.PrefixFrom(netip.AddrFrom4([4]byte{10, 0, byte(i >> 8), byte(i)}), 32),
+				},
+			})
+		}
+		allowed, err := sourcePermissions(cfg)
+		if err != nil {
+			b.Fatal(err)
+		}
+		st := &state{cfg: cfg, allowed: allowed}
+		src := cfg.Peers[n-1].AllowedIPs[0].Addr()
+		dst := netip.MustParseAddr("192.0.2.1")
+		for _, mode := range []struct {
+			name    string
+			matches []filter.Match
+		}{
+			{"grouped", filterMatches(st)},
+			{"ungrouped", ungroupedMatches(st)},
+		} {
+			f := filter.New(mode.matches, nil, allIPs, allIPs, nil, logger.Discard)
+			b.Run(fmt.Sprintf("%s/%d", mode.name, n), func(b *testing.B) {
+				for b.Loop() {
+					if f.Check(src, dst, 443, ipproto.TCP) != filter.Accept {
+						b.Fatal("dropped")
+					}
+				}
+			})
+		}
 	}
 }

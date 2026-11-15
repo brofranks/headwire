@@ -77,7 +77,7 @@ func TestRouteIndexOwnership(t *testing.T) {
 					first.AllowedIPs = append(first.AllowedIPs, netip.MustParsePrefix(prefix))
 				}
 			}
-			st, err := newState(cfg, nil)
+			st, err := newState(cfg, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +119,7 @@ func BenchmarkPeerByIP(b *testing.B) {
 	for _, n := range []int{128, 1024, 4096} {
 		cfg := sparseOwnershipConfig(b, n)
 		cfg.Interface.PrivateKey = key.NewNode()
-		st, err := newState(cfg, nil)
+		st, err := newState(cfg, nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -33,10 +33,10 @@ type Config struct {
 type Region struct {
 	ID    int
 	Nodes []string
-	// Addrs, if set, holds each node's resolved addresses in Nodes order, so
-	// relay dials need no DNS. Every address is a dial candidate, and empty
-	// entries are omitted from the DERP map. Nil permits runtime DNS. It is
-	// not a configuration key.
+	// Addrs, if set, holds each node's addresses in Nodes order, so relay
+	// dials need no DNS. The Resolve key sets it for every node, or the
+	// provider fills it by lookup. Every address is a dial candidate, and
+	// empty entries are omitted from the DERP map. Nil permits runtime DNS.
 	Addrs [][]netip.Addr
 }
 
@@ -236,7 +236,7 @@ func parseInterface(s *section, iface *Interface) error {
 
 func parseRegion(s *section) (Region, error) {
 	var r Region
-	if err := s.checkKnownKeys("ID", "Nodes"); err != nil {
+	if err := s.checkKnownKeys("ID", "Nodes", "Resolve"); err != nil {
 		return r, err
 	}
 	v, line, err := s.require("ID")
@@ -258,7 +258,46 @@ func parseRegion(s *section) (Region, error) {
 		}
 		r.Nodes = append(r.Nodes, hostname)
 	}
-	return r, nil
+	return r, r.parseResolve(s)
+}
+
+// parseResolve fills Addrs from the section's Resolve lines, each a node
+// hostname followed by its addresses in configuration order.
+func (r *Region) parseResolve(s *section) error {
+	for _, e := range s.entries {
+		if !strings.EqualFold(e.key, "Resolve") {
+			continue
+		}
+		fields := strings.Fields(e.value)
+		if len(fields) < 2 {
+			return fmt.Errorf("line %d: Resolve: want a node hostname and at least one address", e.line)
+		}
+		i := slices.IndexFunc(r.Nodes, func(n string) bool { return strings.EqualFold(n, fields[0]) })
+		if i < 0 {
+			return fmt.Errorf("line %d: Resolve: %q is not in Nodes", e.line, fields[0])
+		}
+		if r.Addrs == nil {
+			r.Addrs = make([][]netip.Addr, len(r.Nodes))
+		}
+		if r.Addrs[i] != nil {
+			return fmt.Errorf("line %d: Resolve: duplicate entry for %q", e.line, fields[0])
+		}
+		for _, v := range fields[1:] {
+			addr, err := netip.ParseAddr(v)
+			if err != nil {
+				return fmt.Errorf("line %d: Resolve: %w", e.line, err)
+			}
+			if addr.Zone() != "" {
+				return fmt.Errorf("line %d: Resolve: zone is only valid in an Endpoint", e.line)
+			}
+			r.Addrs[i] = append(r.Addrs[i], addr.Unmap())
+		}
+	}
+	// A node without addresses would drop out of the DERP map.
+	if i := slices.IndexFunc(r.Addrs, func(a []netip.Addr) bool { return a == nil }); i >= 0 {
+		return fmt.Errorf("line %d: [DERPRegion] Resolve missing for %q", s.line, r.Nodes[i])
+	}
+	return nil
 }
 
 func parsePeer(s *section) (Peer, error) {

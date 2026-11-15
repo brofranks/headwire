@@ -94,6 +94,18 @@ func TestParseFields(t *testing.T) {
 	}
 }
 
+func TestParseResolve(t *testing.T) {
+	cfg, err := Parse([]byte(iface + "HomeDERP = 1\n" + region +
+		"Resolve = derp2.example.com ::ffff:192.0.2.2\n" +
+		"resolve = DERP1.example.com 2001:db8::1   192.0.2.1\n" + peer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(cfg.Regions[1].Addrs); got != "[[2001:db8::1 192.0.2.1] [192.0.2.2]]" {
+		t.Fatalf("Addrs = %s", got)
+	}
+}
+
 func TestParseMasqueradeAddress(t *testing.T) {
 	cfg, err := Parse([]byte(iface + "Address = fd77::1/128\n" + peer + "MasqueradeAddress = 10.69.0.5, fc00::5\n" + peer2))
 	if err != nil {
@@ -164,6 +176,12 @@ func TestParseErrors(t *testing.T) {
 		{"peer without public key", iface + "[Peer]\nAllowedIPs = 100.64.0.2/32\n", "[Peer] missing PublicKey"},
 		{"zero public key", iface + strings.Replace(peer, keyB, zero, 1), "PublicKey: must not be zero"},
 		{"endpoint without host", iface + peer + "Endpoint = :51820\n", "host in \":51820\" must not be empty"},
+		{"resolve unknown node", iface + "HomeDERP = 1\n" + region + "Resolve = derp3.example.com 192.0.2.1\n" + peer, "line 8: Resolve: \"derp3.example.com\" is not in Nodes"},
+		{"resolve without address", iface + "HomeDERP = 1\n" + region + "Resolve = derp1.example.com\n" + peer, "line 8: Resolve: want a node hostname and at least one address"},
+		{"resolve bad address", iface + "HomeDERP = 1\n" + region + "Resolve = derp1.example.com derp.example.net\n" + peer, "line 8: Resolve: ParseAddr"},
+		{"resolve zone", iface + "HomeDERP = 1\n" + region + "Resolve = derp1.example.com fe80::1%eth0\n" + peer, "line 8: Resolve: zone is only valid"},
+		{"resolve duplicate node", iface + "HomeDERP = 1\n" + region + "Resolve = derp1.example.com 192.0.2.1\nResolve = DERP1.example.com 192.0.2.2\n" + peer, "line 9: Resolve: duplicate entry"},
+		{"resolve partial region", iface + "HomeDERP = 1\n" + region + "Resolve = derp1.example.com 192.0.2.1\n" + peer, "line 5: [DERPRegion] Resolve missing for \"derp2.example.com\""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

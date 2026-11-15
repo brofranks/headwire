@@ -94,7 +94,8 @@ func Prepare(c *config.Config) (int32, *Settings, error) {
 
 // Resolve replaces each peer Endpoint hostname and DERP node hostname in c
 // with its addresses, so the engine needs no DNS once the tunnel's routes,
-// which may carry the host's DNS, exist. The addresses stay fixed for the
+// which may carry the host's DNS, exist. A region whose addresses the
+// configuration pins is left as it is. The addresses stay fixed for the
 // session. Endpoint resolution errors are fatal. A DERP node that does not
 // resolve is dropped. Relay resolution fails only when a region that this
 // node or a peer uses as its home has no resolved nodes left.
@@ -110,6 +111,9 @@ func Resolve(c *config.Config) error {
 		c.Peers[i].Endpoint = netip.AddrPortFrom(a.AddrPort().Addr().Unmap(), uint16(a.Port)).String()
 	}
 	for id, r := range c.Regions {
+		if r.Addrs != nil {
+			continue
+		}
 		r.Addrs = make([][]netip.Addr, len(r.Nodes))
 		var resolved bool
 		var resolveErr error

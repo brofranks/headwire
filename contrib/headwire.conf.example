@@ -13,6 +13,10 @@ AllowIn = tcp/22, icmp              # inbound policy for peers without their own
 [DERPRegion]
 ID = 1
 Nodes = derp1.example.com, derp2.example.com
+# Optional: pin every node's addresses so dialing the relay needs no DNS. TLS
+# still verifies the hostname.
+# Resolve = derp1.example.com 192.0.2.1 2001:db8::1
+# Resolve = derp2.example.com 192.0.2.2
 
 # A mesh peer behind NAT: traffic relays through region 1 until discovery finds
 # a direct path. AllowedIPs routes the peer's LAN through it and authorizes

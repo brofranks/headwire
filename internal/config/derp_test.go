@@ -184,31 +184,40 @@ func TestDERPMapDialFallback(t *testing.T) {
 	defer srv.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(srv.Certificate())
-	cfg := &Config{Regions: map[int]Region{1: {
-		ID:    1,
-		Nodes: []string{"relay.example.com"},
-		Addrs: [][]netip.Addr{{
-			netip.MustParseAddr("127.0.0.2"),
-			netip.MustParseAddr("127.0.0.1"),
-		}},
-	}}}
-	region := cfg.DERPMap().Regions[1]
-	for _, n := range region.Nodes {
-		n.DERPPort = srv.Listener.Addr().(*net.TCPAddr).Port
-	}
-	client := derphttp.NewNetcheckClient(tstest.WhileTestRunningLogger(t), netmon.NewStatic())
-	client.TLSConfig = &tls.Config{RootCAs: roots}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	conn, closer, node, err := client.DialRegionTLS(ctx, region)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closer.Close()
-	if node.IPv4 != "127.0.0.1" || node.STUNOnly {
-		t.Errorf("connected node = %+v", node)
-	}
-	if got := conn.ConnectionState().ServerName; got != "relay.example.com" {
-		t.Errorf("TLS server name = %q", got)
+	// The certificate also names 127.0.0.1, so only verifying the hostname
+	// rejects relay.invalid, whichever error the platform verifier reports.
+	for _, host := range []string{"relay.example.com", "relay.invalid"} {
+		t.Run(host, func(t *testing.T) {
+			cfg, err := Parse([]byte(iface + "[DERPRegion]\nID = 1\nNodes = " + host + "\n" +
+				"Resolve = " + host + " 127.0.0.2 127.0.0.1\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			region := cfg.DERPMap().Regions[1]
+			for _, n := range region.Nodes {
+				n.DERPPort = srv.Listener.Addr().(*net.TCPAddr).Port
+			}
+			client := derphttp.NewNetcheckClient(tstest.WhileTestRunningLogger(t), netmon.NewStatic())
+			client.TLSConfig = &tls.Config{RootCAs: roots}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, closer, node, err := client.DialRegionTLS(ctx, region)
+			if host == "relay.invalid" {
+				if err == nil {
+					t.Fatal("dial succeeded, want a certificate verification failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closer.Close()
+			if node.IPv4 != "127.0.0.1" || node.STUNOnly {
+				t.Errorf("connected node = %+v", node)
+			}
+			if got := conn.ConnectionState().ServerName; got != host {
+				t.Errorf("TLS server name = %q", got)
+			}
+		})
 	}
 }

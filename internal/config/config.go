@@ -102,6 +102,9 @@ type Peer struct {
 	// Endpoint is a fixed host:port probed as a direct candidate, or empty.
 	// Name resolution is deferred to the engine.
 	Endpoint string
+	// Addrs, if set, holds Endpoint's resolved addresses, so the engine
+	// performs no lookup. The parser never sets it.
+	Addrs []netip.AddrPort
 	// HomeDERP is the peer's home DERP region ID, or 0. Such a peer is relayed
 	// until disco probing of Endpoint or of exchanged candidates finds a
 	// direct path.

@@ -8,6 +8,7 @@ package engine
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -16,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -556,16 +558,50 @@ func peerNode(p config.Peer, id tailcfg.NodeID) (tailcfg.NodeView, error) {
 			n.Addresses = append(n.Addresses, pfx)
 		}
 	}
-	if p.Endpoint != "" {
-		addr, err := net.ResolveUDPAddr("udp", p.Endpoint)
+	n.Endpoints = p.Addrs
+	if p.Addrs == nil && p.Endpoint != "" {
+		eps, err := ResolveEndpoint(p)
 		if err != nil {
-			return tailcfg.NodeView{}, fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
+			return tailcfg.NodeView{}, err
 		}
-		n.Endpoints = []netip.AddrPort{
-			netip.AddrPortFrom(addr.AddrPort().Addr().Unmap(), uint16(addr.Port)),
-		}
+		n.Endpoints = eps
 	}
 	return n.View(), nil
+}
+
+// ResolveEndpoint returns the addresses of p's Endpoint in the resolver's
+// preference order. An ordinary WireGuard peer gets only the first, while a
+// discovery peer's addresses are all probed as direct candidates.
+func ResolveEndpoint(p config.Peer) ([]netip.AddrPort, error) {
+	return resolveEndpoint(p, net.DefaultResolver.LookupIPAddr)
+}
+
+func resolveEndpoint(
+	p config.Peer,
+	lookup func(context.Context, string) ([]net.IPAddr, error),
+) ([]netip.AddrPort, error) {
+	host, port, err := net.SplitHostPort(p.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
+	}
+	addrs, err := lookup(context.Background(), host)
+	if err != nil {
+		return nil, fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
+	}
+	if p.WireGuardOnly() {
+		// The ordinary-peer selector uses raw ICMP to rank multiple addresses.
+		addrs = addrs[:1]
+	}
+	var eps []netip.AddrPort
+	for _, a := range addrs {
+		ip, _ := netip.AddrFromSlice(a.IP)
+		eps = append(eps, netip.AddrPortFrom(ip.Unmap().WithZone(a.Zone), uint16(n)))
+	}
+	return eps, nil
 }
 
 // peerConfig is the engine's lazy per-peer config source.

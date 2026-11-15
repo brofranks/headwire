@@ -169,7 +169,13 @@ func startNode(t *testing.T, cfg *config.Config, logf logger.Logf) (*testNode, e
 // startEcho serves echo on testEchoPort at every interface address.
 func startEcho(t *testing.T, cfg *config.Config) *testNode {
 	t.Helper()
-	n, err := startNode(t, cfg, tstest.WhileTestRunningLogger(t))
+	return startEchoLogf(t, cfg, tstest.WhileTestRunningLogger(t))
+}
+
+// startEchoLogf is startEcho with the engine logging to logf.
+func startEchoLogf(t *testing.T, cfg *config.Config, logf logger.Logf) *testNode {
+	t.Helper()
+	n, err := startNode(t, cfg, logf)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,4 +51,4 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.7-headwire.1
+replace tailscale.com => github.com/brofranks/tailscale v1.104.7-headwire.2

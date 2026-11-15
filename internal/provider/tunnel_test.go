@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"brof.dev/headwire/internal/config"
 	"brof.dev/headwire/internal/discokey"
+	"brof.dev/headwire/internal/engine"
 	"github.com/tailscale/wireguard-go/tun"
 	"github.com/tailscale/wireguard-go/tun/tuntest"
 	"tailscale.com/tstest"
@@ -376,18 +378,34 @@ func TestStartWithoutSession(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
+	discovery := config.Peer{
+		DiscoKey: discokey.PublicForNode(key.NewNode()),
+		Endpoint: "localhost:51820",
+	}
+	want, err := engine.ResolveEndpoint(discovery)
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := &config.Config{
 		Regions: map[int]config.Region{1: {ID: 1, Nodes: []string{"localhost"}}},
-		Peers:   []config.Peer{{Endpoint: "localhost:51820"}, {}},
+		Peers:   []config.Peer{{Endpoint: "localhost:51820"}, {}, discovery},
 	}
 	if err := Resolve(c); err != nil {
 		t.Fatal(err)
 	}
-	if a, err := netip.ParseAddrPort(c.Peers[0].Endpoint); err != nil || !a.Addr().IsLoopback() || a.Port() != 51820 {
-		t.Fatalf("endpoint %q", c.Peers[0].Endpoint)
+	if a := c.Peers[0].Addrs; len(a) != 1 || !a[0].Addr().IsLoopback() || a[0].Port() != 51820 {
+		t.Fatalf("endpoint addresses %v", a)
 	}
-	if c.Peers[1].Endpoint != "" {
-		t.Fatalf("passive peer gained endpoint %q", c.Peers[1].Endpoint)
+	if c.Peers[1].Addrs != nil {
+		t.Fatalf("passive peer gained addresses %v", c.Peers[1].Addrs)
+	}
+	if !slices.Equal(c.Peers[2].Addrs, want) {
+		t.Fatalf("discovery addresses = %v, want %v", c.Peers[2].Addrs, want)
+	}
+	for _, i := range []int{0, 2} {
+		if c.Peers[i].Endpoint != "localhost:51820" {
+			t.Fatalf("peer %d endpoint = %q", i, c.Peers[i].Endpoint)
+		}
 	}
 	n := c.DERPMap().Regions[1].Nodes[0]
 	if n.HostName != "localhost" || (n.IPv4 != "127.0.0.1" && n.IPv6 != "::1") {

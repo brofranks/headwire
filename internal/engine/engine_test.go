@@ -452,3 +452,89 @@ func TestReloadPreservesSession(t *testing.T) {
 		t.Fatal("additive reload replaced the established session")
 	}
 }
+
+func TestPeerNodeResolvedEndpoints(t *testing.T) {
+	k := key.NewNode()
+	addrs := []netip.AddrPort{
+		netip.MustParseAddrPort("192.0.2.1:51820"),
+		netip.MustParseAddrPort("[2001:db8::1]:51820"),
+	}
+	n, err := peerNode(config.Peer{
+		PublicKey: k.Public(),
+		DiscoKey:  discokey.PublicForNode(k),
+		Endpoint:  "name.invalid:51820",
+		Addrs:     addrs,
+	}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := n.Endpoints().AsSlice(); !slices.Equal(got, addrs) {
+		t.Fatalf("endpoints = %v, want %v", got, addrs)
+	}
+}
+
+func TestResolveEndpoint(t *testing.T) {
+	k := key.NewNode()
+	ordinary := config.Peer{PublicKey: k.Public()}
+	discovery := config.Peer{PublicKey: k.Public(), DiscoKey: discokey.PublicForNode(k)}
+	for _, tt := range []struct {
+		peer     config.Peer
+		endpoint string
+		want     []netip.AddrPort
+	}{
+		{ordinary, "192.0.2.1:7", []netip.AddrPort{netip.MustParseAddrPort("192.0.2.1:7")}},
+		{ordinary, "[::ffff:192.0.2.1]:7", []netip.AddrPort{netip.MustParseAddrPort("192.0.2.1:7")}},
+		{discovery, "[fe80::1%1]:7", []netip.AddrPort{netip.MustParseAddrPort("[fe80::1%1]:7")}},
+	} {
+		tt.peer.Endpoint = tt.endpoint
+		got, err := ResolveEndpoint(tt.peer)
+		if err != nil || !slices.Equal(got, tt.want) {
+			t.Errorf("%s (ordinary %v): got %v, %v, want %v", tt.endpoint, tt.peer.WireGuardOnly(), got, err, tt.want)
+		}
+	}
+	ordinary.Endpoint = "name.invalid:1"
+	if _, err := ResolveEndpoint(ordinary); err == nil || !strings.HasPrefix(err.Error(), "peer ") {
+		t.Fatalf("unresolvable endpoint: %v", err)
+	}
+}
+
+func TestResolveEndpointOrder(t *testing.T) {
+	k := key.NewNode()
+	for _, first := range []string{"2001:db8::1", "192.0.2.1"} {
+		t.Run(first, func(t *testing.T) {
+			addrs := []netip.AddrPort{
+				netip.MustParseAddrPort("[2001:db8::1]:51820"),
+				netip.MustParseAddrPort("192.0.2.1:51820"),
+				netip.MustParseAddrPort("192.0.2.2:51820"),
+			}
+			if first == "192.0.2.1" {
+				addrs[0], addrs[1] = addrs[1], addrs[0]
+			}
+			lookup := func(_ context.Context, host string) ([]net.IPAddr, error) {
+				if host != "peer.example.com" {
+					t.Fatalf("lookup host = %q", host)
+				}
+				var ips []net.IPAddr
+				for _, a := range addrs {
+					ips = append(ips, net.IPAddr{IP: a.Addr().AsSlice()})
+				}
+				return ips, nil
+			}
+			for _, disco := range []key.DiscoPublic{{}, discokey.PublicForNode(k)} {
+				p := config.Peer{
+					PublicKey: k.Public(),
+					DiscoKey:  disco,
+					Endpoint:  "peer.example.com:51820",
+				}
+				want := addrs
+				if p.WireGuardOnly() {
+					want = addrs[:1]
+				}
+				got, err := resolveEndpoint(p, lookup)
+				if err != nil || !slices.Equal(got, want) {
+					t.Errorf("ordinary %v: got %v, %v, want %v", p.WireGuardOnly(), got, err, want)
+				}
+			}
+		})
+	}
+}

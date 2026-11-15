@@ -425,6 +425,22 @@ func TestResolveRelayFallback(t *testing.T) {
 	}
 }
 
+func TestResolvePinnedRegion(t *testing.T) {
+	pinned := [][]netip.Addr{{netip.MustParseAddr("192.0.2.1")}}
+	c := &config.Config{
+		Interface: config.Interface{HomeDERP: 1},
+		Regions: map[int]config.Region{
+			1: {ID: 1, Nodes: []string{"relay.invalid"}, Addrs: pinned},
+		},
+	}
+	if err := Resolve(c); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.Regions[1].Addrs, pinned) {
+		t.Fatalf("pinned addresses changed: %v", c.Regions[1].Addrs)
+	}
+}
+
 func TestResolveRequiredRegion(t *testing.T) {
 	for _, home := range []string{"self", "peer"} {
 		t.Run(home, func(t *testing.T) {

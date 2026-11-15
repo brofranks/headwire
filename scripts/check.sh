@@ -14,7 +14,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export CGO_ENABLED=1
 . scripts/goflags.sh
+go_version=$(go list -m -f '{{.GoVersion}}')
 for module in tools/check tools/release; do
+    # The root go.mod sets the Go version for every module.
+    [ "$(go -C "$module" list -m -f '{{.GoVersion}}')" = "$go_version" ] ||
+        die "$module/go.mod: go line differs from go.mod, run: go -C $module mod edit -go=$go_version"
     go -C "$module" mod tidy -diff
     go -C "$module" mod verify
 done

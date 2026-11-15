@@ -12,6 +12,7 @@ import (
 
 	"brof.dev/headwire/internal/config"
 	"brof.dev/headwire/internal/discokey"
+	"tailscale.com/net/netmon"
 	"tailscale.com/net/packet"
 	"tailscale.com/types/key"
 	"tailscale.com/wgengine/wgcfg"
@@ -35,7 +36,7 @@ func TestSourceOwnership(t *testing.T) {
 			Addresses:  []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 		},
 		Peers: peers,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,14 +204,14 @@ func TestPeerForIPConcurrentSnapshots(t *testing.T) {
 	peer := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.2/32")}
 	var states []*state
 	for range 2 {
-		st, err := newState(self.config(t, "", peer, ""), nil)
+		st, err := newState(self.config(t, "", peer, ""), nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		states = append(states, st)
 		peer.priv = key.NewNode()
 	}
-	empty, err := newState(self.parse(t, "", ""), nil)
+	empty, err := newState(self.parse(t, "", ""), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,14 +260,14 @@ func TestReloadSourceOwnership(t *testing.T) {
 		{"redundant prefix", a.peerSection(""), strings.ReplaceAll(a.peerSection(""), a.addr.String(), a.addr.String()+", 100.64.0.2/32"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := &Engine{}
-			before, err := newState(r.parse(t, "", tc.before), nil)
+			e := &Engine{netMon: netmon.NewStatic()}
+			before, err := newState(r.parse(t, "", tc.before), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			e.state.Store(before)
 			cfg := r.parse(t, "", tc.after)
-			after, err := newState(cfg, before.ids)
+			after, err := newState(cfg, before.ids, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -436,11 +437,11 @@ func TestIPv6SourceOwnership(t *testing.T) {
 func TestReloadPresharedKeyRequiresRestart(t *testing.T) {
 	self := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.1/32")}
 	peer := node{priv: key.NewNode(), addr: netip.MustParsePrefix("100.64.0.2/32")}
-	before, err := newState(self.config(t, "", peer, ""), nil)
+	before, err := newState(self.config(t, "", peer, ""), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &Engine{}
+	e := &Engine{netMon: netmon.NewStatic()}
 	e.state.Store(before)
 	next := self.config(t, "", peer, "")
 	next.Peers[0].PresharedKey[0] = 1

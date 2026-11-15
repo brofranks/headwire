@@ -393,8 +393,14 @@ func TestResolve(t *testing.T) {
 	if err := Resolve(c); err != nil {
 		t.Fatal(err)
 	}
-	if a := c.Peers[0].Addrs; len(a) != 1 || !a[0].Addr().IsLoopback() || a[0].Port() != 51820 {
-		t.Fatalf("endpoint addresses %v", a)
+	a := c.Peers[0].Addrs
+	if len(a) == 0 {
+		t.Fatal("endpoint gained no addresses")
+	}
+	for _, ap := range a {
+		if !ap.Addr().IsLoopback() || ap.Port() != 51820 {
+			t.Fatalf("endpoint addresses %v", a)
+		}
 	}
 	if c.Peers[1].Addrs != nil {
 		t.Fatalf("passive peer gained addresses %v", c.Peers[1].Addrs)

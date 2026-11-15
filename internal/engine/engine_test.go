@@ -16,6 +16,7 @@ import (
 	"brof.dev/headwire/internal/discokey"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/dns"
+	"tailscale.com/net/netmon"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/wgengine"
@@ -272,7 +273,7 @@ func TestReloadDERPConfiguration(t *testing.T) {
 	// Exercise region comparison without selecting a home relay or
 	// contacting it. Rejection must precede engine mutations, so no running
 	// engine is needed.
-	e := &Engine{}
+	e := &Engine{netMon: netmon.NewStatic()}
 	e.state.Store(&state{cfg: a.parse(t, region, "")})
 	before := e.state.Load()
 	if err := e.Reload(a.parse(t, strings.ReplaceAll(region, "first.example", "second.example"), "")); err == nil || !strings.Contains(err.Error(), "restart") {
@@ -321,7 +322,7 @@ func TestPingResults(t *testing.T) {
 	cfg := a.parse(t, "", b.peerSection("")+fmt.Sprintf("[Peer]\nPublicKey = %s\nAllowedIPs = %s\nEndpoint = 127.0.0.1:1\n",
 		//lint:ignore SA1019 raw keys; see config.EncodeKey.
 		config.EncodeKey(c.priv.Public().Raw32()), c.addr))
-	st, err := newState(cfg, nil)
+	st, err := newState(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,23 +454,119 @@ func TestReloadPreservesSession(t *testing.T) {
 	}
 }
 
-func TestPeerNodeResolvedEndpoints(t *testing.T) {
+// TestPresetAddrs checks that a peer's preset Addrs reach its node without a
+// lookup, which name.invalid would fail, and that the state keeps them.
+func TestPresetAddrs(t *testing.T) {
 	k := key.NewNode()
 	addrs := []netip.AddrPort{
 		netip.MustParseAddrPort("192.0.2.1:51820"),
 		netip.MustParseAddrPort("[2001:db8::1]:51820"),
 	}
-	n, err := peerNode(config.Peer{
-		PublicKey: k.Public(),
-		DiscoKey:  discokey.PublicForNode(k),
-		Endpoint:  "name.invalid:51820",
-		Addrs:     addrs,
-	}, 2)
+	cfg := &config.Config{
+		Interface: config.Interface{PrivateKey: key.NewNode()},
+		Peers: []config.Peer{{
+			PublicKey: k.Public(),
+			DiscoKey:  discokey.PublicForNode(k),
+			Endpoint:  "name.invalid:51820",
+			Addrs:     addrs,
+		}},
+	}
+	st, err := newState(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := n.Endpoints().AsSlice(); !slices.Equal(got, addrs) {
+	if got := st.nodes[k.Public()].Endpoints().AsSlice(); !slices.Equal(got, addrs) {
 		t.Fatalf("endpoints = %v, want %v", got, addrs)
+	}
+	if got := st.cfg.Peers[0].Addrs; !slices.Equal(got, addrs) {
+		t.Fatalf("state addrs = %v, want %v", got, addrs)
+	}
+}
+
+func TestEndpoints(t *testing.T) {
+	k := key.NewNode()
+	v4 := netip.MustParseAddrPort("192.0.2.1:7")
+	v6 := netip.MustParseAddrPort("[2001:db8::1]:7")
+	both := []netip.AddrPort{v6, v4}
+	discovery := config.Peer{PublicKey: k.Public(), DiscoKey: discokey.PublicForNode(k), Addrs: both}
+	for _, tt := range []struct {
+		peer config.Peer
+		ifs  *netmon.State
+		want []netip.AddrPort
+	}{
+		{config.Peer{Addrs: both}, nil, both[:1]},
+		{config.Peer{Addrs: both}, &netmon.State{}, both[:1]},
+		{config.Peer{Addrs: both}, &netmon.State{HaveV4: true, HaveV6: true}, both[:1]},
+		{config.Peer{Addrs: both}, &netmon.State{HaveV4: true}, []netip.AddrPort{v4}},
+		{config.Peer{Addrs: both}, &netmon.State{HaveV6: true}, []netip.AddrPort{v6}},
+		{config.Peer{Addrs: []netip.AddrPort{v6}}, &netmon.State{HaveV4: true}, []netip.AddrPort{v6}},
+		{config.Peer{}, &netmon.State{HaveV4: true}, nil},
+		{discovery, &netmon.State{HaveV4: true}, both},
+	} {
+		if got := endpoints(tt.peer, tt.ifs); !slices.Equal(got, tt.want) {
+			t.Errorf("endpoints(%v, %v) = %v, want %v", tt.peer.Addrs, tt.ifs, got, tt.want)
+		}
+	}
+}
+
+// TestRepick checks that a network change moves an ordinary peer to an
+// address in a family the host has, without a lookup, and that the session
+// survives the move and the move back.
+func TestRepick(t *testing.T) {
+	r := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
+	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}
+	cfg := r.config(t, "", a, "Endpoint = name.invalid:1")
+	v6 := netip.MustParseAddrPort("[2001:db8::1]:1")
+	v4 := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), a.port)
+	cfg.Peers[0].DiscoKey = key.DiscoPublic{}
+	cfg.Peers[0].Addrs = []netip.AddrPort{v6, v4}
+	er := startEcho(t, cfg)
+	acfg := a.config(t, "", r, fmt.Sprintf("Endpoint = 127.0.0.1:%d", r.port))
+	acfg.Peers[0].DiscoKey = key.DiscoPublic{}
+	startEcho(t, acfg)
+	pick := func(ifs *netmon.State, want netip.AddrPort) {
+		t.Helper()
+		er.repick(func() *netmon.State {
+			if er.mu.TryLock() {
+				er.mu.Unlock()
+				t.Error("network state read without the apply lock")
+			}
+			return ifs
+		})
+		got := er.state.Load().nodes[a.priv.Public()].Endpoints().AsSlice()
+		if !slices.Equal(got, []netip.AddrPort{want}) {
+			t.Fatalf("after %v: endpoints = %v, want %v", ifs, got, want)
+		}
+	}
+	pick(&netmon.State{HaveV4: true}, v4)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := er.stack.dialTCP(ctx, netip.AddrPortFrom(a.addr.Addr(), testEchoPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	deadline, _ := ctx.Deadline()
+	if err := c.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	exchange := func(s string) {
+		t.Helper()
+		if _, err := c.Write([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+		b := make([]byte, len(s))
+		if _, err := io.ReadFull(c, b); err != nil || string(b) != s {
+			t.Fatalf("stream: %q, %v", b, err)
+		}
+	}
+	exchange("before")
+	handshake := er.peerStatus(a.priv.Public()).LastHandshake
+	pick(&netmon.State{HaveV6: true}, v6)
+	pick(&netmon.State{HaveV4: true}, v4)
+	exchange("after")
+	if got := er.peerStatus(a.priv.Public()).LastHandshake; !got.Equal(handshake) {
+		t.Fatal("repick replaced the established session")
 	}
 }
 
@@ -526,13 +623,9 @@ func TestResolveEndpointOrder(t *testing.T) {
 					DiscoKey:  disco,
 					Endpoint:  "peer.example.com:51820",
 				}
-				want := addrs
-				if p.WireGuardOnly() {
-					want = addrs[:1]
-				}
 				got, err := resolveEndpoint(p, lookup)
-				if err != nil || !slices.Equal(got, want) {
-					t.Errorf("ordinary %v: got %v, %v, want %v", p.WireGuardOnly(), got, err, want)
+				if err != nil || !slices.Equal(got, addrs) {
+					t.Errorf("ordinary %v: got %v, %v, want %v", p.WireGuardOnly(), got, err, addrs)
 				}
 			}
 		})

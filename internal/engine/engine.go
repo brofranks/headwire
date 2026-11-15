@@ -80,9 +80,9 @@ type Engine struct {
 
 	dnsMu   sync.Mutex         // serializes DNS updates and restoration
 	hostDNS dns.OSConfigurator // set when a kernel TUN has DNS
-	unwatch func()             // stops the link-change DNS re-apply
+	unwatch func()             // stops the link-change callback
 
-	mu    sync.Mutex       // serializes Reload
+	mu    sync.Mutex       // serializes Reload and repick
 	epsMu sync.Mutex       // guards eps
 	eps   []netip.AddrPort // our endpoints as magicsock last reported them
 }
@@ -90,6 +90,8 @@ type Engine struct {
 // state is one immutable view of the configuration. Reload swaps it whole
 // so the engine's lookup callbacks never see a half-applied change.
 type state struct {
+	// cfg is the configuration with each Endpoint's addresses resolved into
+	// its peer's Addrs, so a network change picks again without DNS.
 	cfg     *config.Config
 	peers   map[key.NodePublic]config.Peer
 	nodes   map[key.NodePublic]tailcfg.NodeView // nm.Peers by key
@@ -169,7 +171,7 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	// The wrapper buffers all traffic until told the stack above it is ready.
 	e.tun.Start()
 
-	st, err := newState(cfg, nil)
+	st, err := newState(cfg, nil, e.netMon.InterfaceState())
 	if err != nil {
 		return nil, err
 	}
@@ -203,23 +205,27 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	// The interface has its address by now, which resolved requires. The
 	// resolvers go to the OS as configured: the engine's DNS manager would
 	// route some public addresses through a forwarder headwire does not run.
-	if e.hostDNS != nil {
-		set := func() error {
-			return e.setDNS(dns.OSConfig{Nameservers: cfg.Interface.DNS, SearchDomains: cfg.Interface.DNSSearch})
-		}
-		if err := set(); err != nil {
-			return nil, err
-		}
+	set := func() error {
+		return e.setDNS(dns.OSConfig{Nameservers: cfg.Interface.DNS, SearchDomains: cfg.Interface.DNSSearch})
+	}
+	if err := set(); err != nil {
+		return nil, err
+	}
+	e.unwatch = e.netMon.RegisterChangeCallback(func(d *netmon.ChangeDelta) {
+		// Callbacks run unordered, so take the monitor's latest state rather
+		// than the change that triggered this one.
+		e.repick(e.netMon.InterfaceState)
 		// NetworkManager restarts and suspend/resume clear resolved's
 		// per-link settings, so a major link change re-applies them.
-		e.unwatch = e.netMon.RegisterChangeCallback(func(d *netmon.ChangeDelta) {
-			if d.RebindLikelyRequired && d.AnyInterfaceUp() {
-				if err := set(); err != nil {
-					e.logf("dns: re-apply after link change: %v", err)
-				}
+		if d.RebindLikelyRequired && d.AnyInterfaceUp() {
+			if err := set(); err != nil {
+				e.logf("dns: re-apply after link change: %v", err)
 			}
-		})
-	}
+		}
+	})
+	// A change between the state read above and the registration is picked up
+	// here.
+	e.repick(e.netMon.InterfaceState)
 	return e, nil
 }
 
@@ -297,7 +303,6 @@ func (e *Engine) kernelTUN(
 	// neither probed nor touched.
 	if len(cfg.Interface.DNS) > 0 {
 		e.hostDNS, err = newOSConfigurator(e, tracker, dev)
-		e.unwatch = func() {}
 	}
 	return err
 }
@@ -382,6 +387,20 @@ func Routes(cfg *config.Config) []netip.Prefix {
 // whose sandbox hides the route socket the monitor listens on.
 func (e *Engine) NetworkChanged() { e.netMon.InjectEvent() }
 
+// repick reads the latest network state under the apply lock and gives each
+// ordinary peer an endpoint in an available family, without resolving names.
+func (e *Engine) repick(interfaceState func() *netmon.State) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	old := e.state.Load()
+	st, err := newState(old.cfg, old.ids, interfaceState())
+	if err != nil {
+		e.logf("endpoints: %v", err)
+		return
+	}
+	e.apply(old, st)
+}
+
 // ReloadApplyError means publication has occurred and the engine must be
 // closed. The caller must not continue serving or retry against partially
 // applied state.
@@ -415,13 +434,24 @@ func (e *Engine) Reload(cfg *config.Config) error {
 			return fmt.Errorf("peer %s: restart to add or remove DiscoKey", p.PublicKey.ShortString())
 		}
 	}
-	st, err := newState(cfg, old.ids)
+	st, err := newState(cfg, old.ids, e.netMon.InterfaceState())
 	if err != nil {
 		return err
 	}
 	if err := old.checkSourceOwnership(st); err != nil {
 		return err
 	}
+	e.apply(old, st)
+	if err := e.reconfig(cfg); err != nil && !errors.Is(err, wgengine.ErrNoChanges) {
+		return &ReloadApplyError{Err: err}
+	}
+	return nil
+}
+
+// apply publishes st in place of old and brings the filter, peer routes and
+// magicsock's peers in line with it. Unchanged peers are left alone, and an
+// updated peer keeps its session.
+func (e *Engine) apply(old, st *state) {
 	e.state.Store(st)
 	e.eng.SetFilter(newFilter(st, e.tun.GetFilter(), e.logf))
 	e.setPeerRoutes(st)
@@ -431,7 +461,7 @@ func (e *Engine) Reload(cfg *config.Config) error {
 			e.eng.SyncDevicePeer(k)
 		}
 	}
-	for _, p := range cfg.Peers {
+	for _, p := range st.cfg.Peers {
 		was, existed := old.peers[p.PublicKey]
 		was.AllowIn = p.AllowIn // the filter above already applied it
 		if existed && reflect.DeepEqual(was, p) &&
@@ -449,10 +479,6 @@ func (e *Engine) Reload(cfg *config.Config) error {
 			e.eng.MarkDevicePeerForHandshake(p.PublicKey)
 		}
 	}
-	if err := e.reconfig(cfg); err != nil && !errors.Is(err, wgengine.ErrNoChanges) {
-		return &ReloadApplyError{Err: err}
-	}
-	return nil
 }
 
 // setDNS serializes resolver updates with shutdown restoration.
@@ -467,9 +493,11 @@ func (e *Engine) setDNS(c dns.OSConfig) error {
 
 // Close tears the node down in reverse dependency order.
 func (e *Engine) Close() {
+	if e.unwatch != nil {
+		e.unwatch()
+	}
 	e.dnsMu.Lock()
 	if e.hostDNS != nil {
-		e.unwatch()
 		e.hostDNS.Close()
 		e.hostDNS = nil
 	}
@@ -491,16 +519,20 @@ func (e *Engine) Close() {
 // newState synthesises the netmap a control plane would have sent: self as
 // node 1 and each configured peer under its stable ID. Endpoint-mode peers
 // get their (resolved) endpoint seeded, DERP-mode peers their home region,
-// and passive peers neither. ids are the running state's, and a rejected
-// candidate leaves them untouched.
-func newState(cfg *config.Config, ids map[key.NodePublic]tailcfg.NodeID) (*state, error) {
+// and passive peers neither. An Endpoint whose peer has no Addrs is resolved,
+// and ifs, if known, selects among an ordinary peer's addresses. ids are the
+// running state's, and a rejected candidate leaves them untouched.
+func newState(
+	cfg *config.Config,
+	ids map[key.NodePublic]tailcfg.NodeID,
+	ifs *netmon.State,
+) (*state, error) {
 	allowed, err := sourcePermissions(cfg)
 	if err != nil {
 		return nil, err
 	}
 	self := cfg.Interface
 	st := &state{
-		cfg:     cfg,
 		peers:   map[key.NodePublic]config.Peer{},
 		nodes:   map[key.NodePublic]tailcfg.NodeView{},
 		allowed: allowed,
@@ -521,17 +553,23 @@ func newState(cfg *config.Config, ids map[key.NodePublic]tailcfg.NodeID) (*state
 		},
 	}
 	maps.Copy(st.ids, ids)
-	for _, p := range cfg.Peers {
-		st.peers[p.PublicKey] = p
+	resolved := *cfg
+	resolved.Peers = slices.Clone(cfg.Peers)
+	st.cfg = &resolved
+	for i := range resolved.Peers {
+		p := &resolved.Peers[i]
+		if p.Addrs == nil && p.Endpoint != "" {
+			if p.Addrs, err = ResolveEndpoint(*p); err != nil {
+				return nil, err
+			}
+		}
+		st.peers[p.PublicKey] = *p
 		id, ok := st.ids[p.PublicKey]
 		if !ok {
 			id = tailcfg.NodeID(len(st.ids) + 2)
 			st.ids[p.PublicKey] = id
 		}
-		n, err := peerNode(p, id)
-		if err != nil {
-			return nil, err
-		}
+		n := peerNode(*p, id, ifs)
 		st.nodes[p.PublicKey] = n
 		for _, prefix := range p.AllowedIPs {
 			st.routes.Insert(prefix, n)
@@ -541,7 +579,7 @@ func newState(cfg *config.Config, ids map[key.NodePublic]tailcfg.NodeID) (*state
 	return st, nil
 }
 
-func peerNode(p config.Peer, id tailcfg.NodeID) (tailcfg.NodeView, error) {
+func peerNode(p config.Peer, id tailcfg.NodeID, ifs *netmon.State) tailcfg.NodeView {
 	n := &tailcfg.Node{
 		ID:              id,
 		StableID:        tailcfg.StableNodeID(fmt.Sprint(id)),
@@ -558,20 +596,29 @@ func peerNode(p config.Peer, id tailcfg.NodeID) (tailcfg.NodeView, error) {
 			n.Addresses = append(n.Addresses, pfx)
 		}
 	}
-	n.Endpoints = p.Addrs
-	if p.Addrs == nil && p.Endpoint != "" {
-		eps, err := ResolveEndpoint(p)
-		if err != nil {
-			return tailcfg.NodeView{}, err
-		}
-		n.Endpoints = eps
+	n.Endpoints = endpoints(p, ifs)
+	return n.View()
+}
+
+// endpoints returns the addresses p's node carries. A discovery peer's are all
+// probed as direct candidates. An ordinary peer gets one: the first in a
+// family the host has an address in, or the first when ifs is unknown or has
+// neither family.
+func endpoints(p config.Peer, ifs *netmon.State) []netip.AddrPort {
+	if !p.WireGuardOnly() || len(p.Addrs) == 0 {
+		return p.Addrs
 	}
-	return n.View(), nil
+	// The ordinary-peer selector uses raw ICMP to rank multiple addresses.
+	for _, a := range p.Addrs {
+		if ifs != nil && (a.Addr().Is4() && ifs.HaveV4 || a.Addr().Is6() && ifs.HaveV6) {
+			return []netip.AddrPort{a}
+		}
+	}
+	return p.Addrs[:1]
 }
 
 // ResolveEndpoint returns the addresses of p's Endpoint in the resolver's
-// preference order. An ordinary WireGuard peer gets only the first, while a
-// discovery peer's addresses are all probed as direct candidates.
+// preference order.
 func ResolveEndpoint(p config.Peer) ([]netip.AddrPort, error) {
 	return resolveEndpoint(p, net.DefaultResolver.LookupIPAddr)
 }
@@ -591,10 +638,6 @@ func resolveEndpoint(
 	addrs, err := lookup(context.Background(), host)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s: %w", p.PublicKey.ShortString(), err)
-	}
-	if p.WireGuardOnly() {
-		// The ordinary-peer selector uses raw ICMP to rank multiple addresses.
-		addrs = addrs[:1]
 	}
 	var eps []netip.AddrPort
 	for _, a := range addrs {

@@ -28,7 +28,7 @@ func TestStatusRendering(t *testing.T) {
 			{PublicKey: d.Public(), DiscoKey: discokey.PublicForNode(d), AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.4/32")}}, // passive, never seen
 		},
 	}
-	st, err := newState(cfg, nil)
+	st, err := newState(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestRejectedStateKeepsIDs(t *testing.T) {
 		Interface: config.Interface{PrivateKey: key.NewNode()},
 		Peers:     []config.Peer{{PublicKey: a.Public(), Endpoint: "192.0.2.1:51820"}},
 	}
-	st, err := newState(cfg, nil)
+	st, err := newState(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestRejectedStateKeepsIDs(t *testing.T) {
 		config.Peer{PublicKey: b.Public(), Endpoint: "192.0.2.2:51820"},
 		config.Peer{PublicKey: key.NewNode().Public(), Endpoint: "192.0.2.3:bad"},
 	)
-	if _, err := newState(cfg, st.ids); err == nil {
+	if _, err := newState(cfg, st.ids, nil); err == nil {
 		t.Fatal("bad endpoint accepted")
 	}
 	if len(st.ids) != 1 || st.ids[a.Public()] != 2 {
@@ -200,7 +200,7 @@ func TestRejectedStateKeepsIDs(t *testing.T) {
 		{Interface: config.Interface{Addresses: []netip.Prefix{{}}}, Peers: []config.Peer{{PublicKey: a.Public(), AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}}}},
 		{Peers: []config.Peer{{PublicKey: a.Public(), AllowedIPs: []netip.Prefix{{}}}}},
 	} {
-		if _, err := newState(cfg, nil); err == nil {
+		if _, err := newState(cfg, nil, nil); err == nil {
 			t.Fatalf("invalid prefixes accepted: %+v", cfg)
 		}
 	}

@@ -206,11 +206,11 @@ type statusView struct {
 	name  string
 	port  uint16
 	mark  string
-	// eps is the endpoint set onStatus last advertised.
+	// eps is the endpoint set onStatus last recorded.
 	eps []netip.AddrPort
 }
 
-// endpoints returns the advertised endpoint set.
+// endpoints returns our endpoints as magicsock last reported them.
 func (e *Engine) endpoints() []netip.AddrPort {
 	e.epsMu.Lock()
 	defer e.epsMu.Unlock()

@@ -348,7 +348,7 @@ func TestPingResults(t *testing.T) {
 			t.Errorf("ping %s = %q, want %q", tc.ip, reply, tc.want)
 		}
 	}
-	// Without endpoints there is nothing to advertise.
+	// An empty status records no endpoints.
 	e.onStatus(&wgengine.Status{}, nil)
 	if len(e.eps) != 0 {
 		t.Fatal("empty status recorded endpoints")

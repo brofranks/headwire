@@ -1,9 +1,9 @@
 // Package engine drives tailscale.com's wgengine and magicsock from a static
 // headwire configuration: no control plane, no LocalBackend. The config is
-// translated once into a DERP map and a network map, per-peer config is
-// served to the engine lazily, and endpoints are advertised to DERP-mode
-// peers with disco call-me-maybe messages so both sides can upgrade from
-// the relay to a direct path.
+// translated once into a DERP map and a network map, and per-peer config is
+// served to the engine lazily. Each DERP-mode peer starts on its home relay,
+// and magicsock exchanges disco call-me-maybe messages over it so both sides
+// can upgrade to a direct path.
 package engine
 
 import (
@@ -25,7 +25,6 @@ import (
 	"github.com/tailscale/wireguard-go/device"
 	"github.com/tailscale/wireguard-go/tun"
 	"go4.org/netipx"
-	"tailscale.com/disco"
 	"tailscale.com/health"
 	"tailscale.com/net/dns"
 	"tailscale.com/net/netmon"
@@ -83,7 +82,7 @@ type Engine struct {
 
 	mu    sync.Mutex       // serializes Reload
 	epsMu sync.Mutex       // guards eps
-	eps   []netip.AddrPort // last advertised endpoints
+	eps   []netip.AddrPort // our endpoints as magicsock last reported them
 }
 
 // state is one immutable view of the configuration. Reload swaps it whole
@@ -451,9 +450,6 @@ func (e *Engine) Reload(cfg *config.Config) error {
 	if err := e.reconfig(cfg); err != nil && !errors.Is(err, wgengine.ErrNoChanges) {
 		return &ReloadApplyError{Err: err}
 	}
-	if eps := e.endpoints(); len(eps) > 0 {
-		go e.advertiseEndpoints(eps)
-	}
 	return nil
 }
 
@@ -616,10 +612,8 @@ func (e *Engine) peerForIP(ip netip.Addr) (wgengine.PeerForIP, bool) {
 	return wgengine.PeerForIP{Node: n}, true
 }
 
-// onStatus advertises our UDP endpoints whenever magicsock learns a new
-// set. Without a control plane nobody else tells DERP-mode peers where we
-// are, and magicsock only starts probing a peer once it has at least one
-// endpoint for it.
+// onStatus records our UDP endpoints whenever magicsock reports them, for
+// the status endpoints field.
 func (e *Engine) onStatus(st *wgengine.Status, err error) {
 	if err != nil {
 		return
@@ -629,33 +623,7 @@ func (e *Engine) onStatus(st *wgengine.Status, err error) {
 		eps = append(eps, ep.Addr)
 	}
 	slices.SortFunc(eps, netip.AddrPort.Compare)
-	eps = slices.Compact(eps)
 	e.epsMu.Lock()
-	changed := !slices.Equal(eps, e.eps)
-	e.eps = eps
+	e.eps = slices.Compact(eps)
 	e.epsMu.Unlock()
-	if changed && len(eps) > 0 {
-		go e.advertiseEndpoints(eps)
-	}
-}
-
-// advertiseEndpoints sends eps to every DERP-mode peer as a disco
-// call-me-maybe over the peer's home region, framed and sealed exactly as
-// magicsock's own sendDiscoMessage does so the peer processes it natively:
-// it disco-pings the endpoints, learning a direct path to us and teaching
-// us its address from the pings we receive.
-func (e *Engine) advertiseEndpoints(eps []netip.AddrPort) {
-	payload := (&disco.CallMeMaybe{MyNumber: eps}).AppendMarshal(nil)
-	cfg := e.state.Load().cfg
-	discoPriv := discokey.PrivateForNode(cfg.Interface.PrivateKey)
-	for _, p := range cfg.Peers {
-		if p.HomeDERP == 0 {
-			continue
-		}
-		pkt := append([]byte(disco.Magic), e.mc.DiscoPublicKey().AppendTo(nil)...)
-		pkt = append(pkt, discoPriv.Shared(p.DiscoKey).Seal(payload)...)
-		if _, err := e.mc.SendDERPPacketTo(p.PublicKey, tailcfg.DERPRegionID(p.HomeDERP), pkt); err != nil {
-			e.logf("advertise endpoints to %v: %v", p.PublicKey.ShortString(), err)
-		}
-	}
 }

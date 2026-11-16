@@ -8,6 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"syscall"
+
+	"github.com/tailscale/peercred"
 )
 
 // socketPath is where a running node serves its status to `show`.
@@ -18,9 +22,27 @@ var socketPath = func() string {
 	return "/run/headwire/headwire.sock"
 }()
 
-// dialStatus connects to the running node's status socket.
+// geteuid is replaced by tests: only root can serve as another user.
+var geteuid = os.Geteuid
+
+// dialStatus connects to the running node's status socket. The peer must run
+// as root or the current user, so no other user's process answers for the
+// node, whoever controls the socket's path.
 func dialStatus() (net.Conn, error) {
-	return net.DialTimeout("unix", socketPath, statusTimeout)
+	c, err := net.DialTimeout("unix", socketPath, statusTimeout)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := peercred.Get(c)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if uid, _ := creds.UserID(); uid != "0" && uid != strconv.Itoa(geteuid()) {
+		c.Close()
+		return nil, fmt.Errorf("%s: served by uid %s, not root or the current user", socketPath, uid)
+	}
+	return c, nil
 }
 
 // listenStatus claims the status socket. A socket something still answers
@@ -35,13 +57,10 @@ func listenStatus() (net.Listener, error) {
 		return nil, fmt.Errorf("%s: socket in use", socketPath)
 	}
 	os.Remove(socketPath)
+	// The umask makes the socket private from creation. A chmod by path
+	// afterwards would follow a symlink put in its place.
+	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		ln.Close()
-		return nil, err
-	}
-	return ln, nil
+	syscall.Umask(old)
+	return ln, err
 }

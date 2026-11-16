@@ -6,6 +6,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca
 	github.com/gaissmai/bart v0.30.0
+	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc
 	github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb

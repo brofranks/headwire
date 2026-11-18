@@ -3,12 +3,16 @@ name: Build and release
 on:
   pull_request:
   push:
-    branches: ['**']
+    branches: [main, 'release-branch/**']
     tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,11 +20,7 @@ concurrency:
 
 jobs:
   build:
-    if: >-
-      github.event_name != 'push' ||
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
-      startsWith(github.ref, 'refs/heads/release-branch/') ||
-      startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 45
     runs-on: ubuntu-26.04
     env:
       CGO_ENABLED: '0'
@@ -38,7 +38,7 @@ jobs:
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-          git cat-file tag "$GITHUB_REF_NAME" | grep -q '^-----BEGIN \(SSH\|PGP\) SIGNATURE-----$'
+          git cat-file tag "$GITHUB_REF_NAME" | grep '^-----BEGIN \(SSH\|PGP\) SIGNATURE-----$' > /dev/null
           test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
           git merge-base --is-ancestor HEAD "refs/remotes/origin/$DEFAULT_BRANCH" ||
             git merge-base --is-ancestor HEAD \
@@ -46,6 +46,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Development checks
         run: scripts/check.sh
       - name: Upload coverage reports
@@ -79,7 +80,7 @@ jobs:
           test "$("$binary" version)" = "headwire $RELEASE_VERSION"
           "$binary" --help
           for arch in amd64 arm64; do
-            unzip -l "headwire_${RELEASE_VERSION}_windows_$arch.zip" | grep -q '/wintun\.dll$'
+            unzip -l "headwire_${RELEASE_VERSION}_windows_$arch.zip" | grep '/wintun\.dll$' > /dev/null
           done
       - name: Install and remove Debian package
         env:
@@ -99,9 +100,10 @@ jobs:
       - name: Install and remove RPM package on Fedora
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
-        run: |
+        # The Fedora tag is unpinned so the test installs on current packages.
+        run: | # jactionlint ignore=unpinned-images
           docker run --rm -v "$PWD/dist/$RELEASE_VERSION:/packages:ro" -v "$RUNNER_TEMP:/archive:ro" \
-            -e RELEASE_VERSION fedora:44 bash -euo pipefail -c '
+            -e RELEASE_VERSION fedora:45 bash -euo pipefail -c '
               dnf install -y diffutils
               dnf install -y "/packages/headwire_${RELEASE_VERSION}_linux_amd64.rpm"
               test "$(headwire version)" = "headwire $RELEASE_VERSION"
@@ -125,11 +127,7 @@ jobs:
   # only for its own OS, and it cross-builds their archives but cannot run
   # them. The native test jobs need no build output, so they run beside it.
   test-macos:
-    if: >-
-      github.event_name != 'push' ||
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
-      startsWith(github.ref, 'refs/heads/release-branch/') ||
-      startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 30
     runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,6 +136,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Development checks
         run: scripts/check.sh
       - name: Upload coverage reports
@@ -152,11 +151,7 @@ jobs:
   # The runner's account is an administrator, which the status pipe tests here
   # and the Wintun adapter in verify-windows both need.
   test-windows:
-    if: >-
-      github.event_name != 'push' ||
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
-      startsWith(github.ref, 'refs/heads/release-branch/') ||
-      startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 30
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,16 +160,17 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # check.sh's shell linters and coverage run on Linux and macOS, so this
       # job vets and tests alone.
       - name: Vet and test
-        shell: bash
         run: |
           . scripts/goflags.sh
           go vet ./...
           go test -race -count=1 ./...
 
   verify-macos:
+    timeout-minutes: 10
     needs: build
     runs-on: macos-26
     env:
@@ -194,6 +190,7 @@ jobs:
           "$binary" --help
 
   verify-windows:
+    timeout-minutes: 10
     needs: build
     runs-on: windows-2025
     env:
@@ -204,7 +201,6 @@ jobs:
           name: release
           path: release
       - name: Check checksums
-        shell: bash
         run: cd release && sha256sum -c SHA256SUMS
       - name: Verify archive and run a node
         shell: pwsh
@@ -238,6 +234,7 @@ jobs:
   # a release but is not one of its assets: the app repository builds it into
   # the APK.
   build-android:
+    timeout-minutes: 30
     needs: build
     runs-on: ubuntu-26.04
     env:
@@ -249,6 +246,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Build libheadwire.so
         run: bridge/android/build.sh dist/android
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -259,6 +257,7 @@ jobs:
           retention-days: 14
 
   release:
+    timeout-minutes: 15
     environment: release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build, test-macos, test-windows, verify-macos, verify-windows, build-android]
@@ -276,7 +275,6 @@ jobs:
         working-directory: release
         run: sha256sum -c SHA256SUMS
       - name: Sign RPM packages and update checksums
-        shell: bash
         working-directory: release
         env:
           HEADWIRE_RPM_PRIVATE_KEY: ${{ secrets.HEADWIRE_RPM_PRIVATE_KEY }}

@@ -34,8 +34,8 @@ trap 'rm -rf "$work"' EXIT
 . scripts/collect-notices.sh
 install_notice_collector "$work/bin"
 
-GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) GOBIN="$work/bin" \
-    go -C tools/release install github.com/goreleaser/nfpm/v2/cmd/nfpm
+GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) \
+    go build -o "$work/bin/package" ./scripts/package
 
 # The Wintun bindings wireguard-go uses load wintun.dll from the binary's
 # directory. The release is the one tailscale.com's tsconst/wintun pins.
@@ -76,8 +76,7 @@ for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 
     cp -a "$package" "$PACKAGE_DOCS"
     rm "$PACKAGE_DOCS/headwire" "$PACKAGE_DOCS/headwire.service"
     for format in deb rpm; do
-        "$work/bin/nfpm" package --config contrib/nfpm.yaml --packager "$format" \
-            --target "$work/$name.$format"
+        "$work/bin/package" "$format" "$work/$name.$format"
     done
 done
 

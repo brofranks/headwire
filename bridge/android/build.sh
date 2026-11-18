@@ -29,7 +29,7 @@ slice() ( # goarch abi triple
         echo "$2 exported symbols: $got" >&2
         exit 1
     }
-    "$bin/llvm-readelf" -d "$out/$2/libheadwire.so" | grep -q 'SONAME.*\[libheadwire.so\]'
+    "$bin/llvm-readelf" -d "$out/$2/libheadwire.so" | grep 'SONAME.*\[libheadwire.so\]' > /dev/null
     "$bin/llvm-readelf" -lW "$out/$2/libheadwire.so" | awk '$1 == "LOAD" && $NF != "0x4000" {bad = 1} END {exit bad}' || {
         echo "$2: a LOAD segment is not 16 KiB aligned" >&2
         exit 1

@@ -5,26 +5,15 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
       exclude:
         - tailscale.com
-    allow:
-      - dependency-type: direct
-    ignore:
-      # Historical tags cached by the Go proxy outrank the fork's commit-based
-      # versions. The latest declares a different module path and cannot be used.
-      # Update the fork alongside tailscale.com.
-      - dependency-name: github.com/tailscale/wireguard-go
-        versions: ['>= 0.0.1']
-      # The fork pins the Wintun helpers too, and its Windows code links them.
-      - dependency-name: golang.zx2c4.com/wireguard/windows
-  - package-ecosystem: gomod
-    directory: /tools/check
-    schedule:
-      interval: weekly
     # Go marks tool dependencies as indirect requirements.
     allow:
-      - dependency-name: github.com/rhysd/actionlint
+      - dependency-type: direct
+      - dependency-name: github.com/google/go-licenses/v2
+        dependency-type: all
+      - dependency-name: github.com/jdx/jactionlint/v2
         dependency-type: all
       - dependency-name: golang.org/x/tools
         dependency-type: all
@@ -34,20 +23,17 @@ updates:
         dependency-type: all
       - dependency-name: mvdan.cc/sh/v3
         dependency-type: all
-  - package-ecosystem: gomod
-    directory: /tools/release
-    schedule:
-      interval: weekly
-    allow:
-      - dependency-name: github.com/google/go-licenses/v2
-        dependency-type: all
-      - dependency-name: github.com/goreleaser/nfpm/v2
-        dependency-type: all
-  - package-ecosystem: pip
-    directory: /tools/check
-    schedule:
-      interval: weekly
+    ignore:
+      # Historical tags cached by the Go proxy outrank the fork's commit-based
+      # versions. The latest declares a different module path and cannot be used.
+      # Update the fork alongside tailscale.com.
+      - dependency-name: github.com/tailscale/wireguard-go
+        versions: ['>= 0.0.1']
+      # The fork pins the Wintun helpers too, and its Windows code links them.
+      - dependency-name: golang.zx2c4.com/wireguard/windows
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

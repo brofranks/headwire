@@ -14,25 +14,39 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export CGO_ENABLED=1
 . scripts/goflags.sh
-go_version=$(go list -m -f '{{.GoVersion}}')
-for module in tools/check tools/release; do
-    # The root go.mod sets the Go version for every module.
-    [ "$(go -C "$module" list -m -f '{{.GoVersion}}')" = "$go_version" ] ||
-        die "$module/go.mod: go line differs from go.mod, run: go -C $module mod edit -go=$go_version"
-    go -C "$module" mod tidy -diff
-    go -C "$module" mod verify
-done
-GOBIN="$work" go -C tools/check install tool
-python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q --require-hashes -r tools/check/requirements.txt
-# actionlint finds shellcheck here for workflow run blocks.
-PATH="$work/venv/bin:$PATH"
+GOBIN="$work" go install tool
+# ShellCheck is not a Go module, so its release is pinned here by digest.
+case "$(uname -sm)" in
+'Linux x86_64')
+    platform=linux.x86_64
+    sha256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+    ;;
+'Linux aarch64')
+    platform=linux.aarch64
+    sha256=12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
+    ;;
+'Darwin arm64')
+    platform=darwin.aarch64
+    sha256=56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
+    ;;
+'Darwin x86_64')
+    platform=darwin.x86_64
+    sha256=3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6
+    ;;
+esac
+curl -fsSL -o "$work/shellcheck.tar.xz" \
+    "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.$platform.tar.xz"
+shasum -a 256 -c --quiet <<< "$sha256  $work/shellcheck.tar.xz"
+tar -xJf "$work/shellcheck.tar.xz" -C "$work" --strip-components=1 \
+    shellcheck-v0.11.0/shellcheck
+# jactionlint finds shellcheck here for workflow run blocks.
+PATH="$work:$PATH"
 
 go mod tidy -diff
 go mod verify
 "$work/shfmt" -d scripts bridge contrib
 "$work/shfmt" -f scripts bridge contrib | xargs shellcheck -x -P SCRIPTDIR -P .
-"$work/actionlint" .github/workflows/*
+"$work/jactionlint" --config-file /dev/null .github/workflows/* .github/dependabot.yml
 
 # Include platform-specific source without traversing generated artifacts.
 find cmd internal bridge scripts -name '*.go' -exec "$work/goimports" -d {} + > "$work/format.diff"
@@ -65,3 +79,4 @@ go test -race -count=1 -coverpkg=./... -covermode=atomic -coverprofile="$coverag
 go tool cover -func="$coverage/coverage.out" | tee "$coverage/functions.txt"
 go tool cover -html="$coverage/coverage.out" -o "$coverage/index.html"
 "$work/govulncheck" -test ./...
+go list tool | xargs "$work/govulncheck"

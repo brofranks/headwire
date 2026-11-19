@@ -120,7 +120,7 @@ require (
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
-replace tailscale.com => github.com/brofranks/tailscale v1.104.7-headwire.2
+replace tailscale.com => github.com/brofranks/tailscale v1.104.7-headwire.3
 
 tool (
 	github.com/google/go-licenses/v2

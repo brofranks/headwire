@@ -153,7 +153,13 @@ func TestParseErrors(t *testing.T) {
 		{"duplicate peer disco key", iface + peer + strings.Replace(peer2, keyE, keyC, 1), "duplicate [Peer] DiscoKey"},
 		{"peer is self", iface + strings.Replace(peer, keyB, selfPub(t), 1), "own public key"},
 		{"bad psk", iface + peer + "PresharedKey = nope!\n", "PresharedKey: key must be 44 base64"},
-		{"bad port", iface + peer + "Endpoint = 203.0.113.1:70000\n", "invalid port"},
+		{"bad endpoint port", iface + peer + "Endpoint = 203.0.113.1:70000\n", "port in \"203.0.113.1:70000\" must be 1-65535"},
+		{"zero endpoint port", iface + peer + "Endpoint = 203.0.113.1:0\n", "port in \"203.0.113.1:0\" must be 1-65535"},
+		{"mapped allowed ip", iface + peer + "AllowedIPs = ::ffff:192.0.2.8\n", "AllowedIPs: ::ffff:192.0.2.8/128 is IPv4-mapped, write it as 192.0.2.8/32"},
+		{"mapped address", iface + "Address = ::ffff:100.64.0.1/120\n", "Address: ::ffff:100.64.0.1/120 is IPv4-mapped, write it as 100.64.0.1/24"},
+		{"mapped address /64", iface + "Address = ::ffff:192.0.2.8/64\n", "Address: ::ffff:192.0.2.8/64 is IPv4-mapped"},
+		{"mapped address /0", iface + "Address = ::ffff:192.0.2.8/0\n", "Address: ::ffff:192.0.2.8/0 is IPv4-mapped"},
+		{"mapped allow-in destination", iface + "AllowIn = tcp/22 to ::ffff:192.0.2.8\n" + peer, "AllowIn: invalid destination \"::ffff:192.0.2.8\": ::ffff:192.0.2.8/128 is IPv4-mapped, write it as 192.0.2.8/32"},
 		{"peer derp without interface derp", iface + region + peer + "HomeDERP = 1\n", "[Peer] HomeDERP requires [Interface] HomeDERP"},
 		{"unknown interface region", iface + "HomeDERP = 2\n" + region + peer + "HomeDERP = 1\n", "HomeDERP = 2 does not match"},
 		{"unknown peer region", iface + "HomeDERP = 1\n" + region + peer + "HomeDERP = 2\n", "HomeDERP = 2 does not match"},
@@ -286,6 +292,17 @@ func TestAddressFamilies(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Fatalf("accepted invalid config: %s", bad)
+		}
+	}
+}
+
+func TestMappedPrefixErrors(t *testing.T) {
+	for input, want := range map[string]string{
+		"::ffff:0.0.0.0/95": "::ffff:0.0.0.0/95 is IPv4-mapped",
+		"::ffff:0.0.0.0/96": "::ffff:0.0.0.0/96 is IPv4-mapped, write it as 0.0.0.0/0",
+	} {
+		if _, err := parsePrefix(input); err == nil || err.Error() != want {
+			t.Errorf("parsePrefix(%q) error = %v, want %q", input, err, want)
 		}
 	}
 }

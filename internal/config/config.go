@@ -469,7 +469,23 @@ func (s *section) allowIn() ([]AllowRule, error) {
 	return rules, nil
 }
 
+// parsePrefix parses an address or prefix, reading a bare address as a
+// full-length prefix. It rejects an IPv4-mapped one.
 func parsePrefix(s string) (netip.Prefix, error) {
+	prefix, err := parseAnyPrefix(s)
+	// A mask shorter than /96 erases the IPv4-mapped marker, so this check
+	// uses the address as written.
+	if err != nil || !prefix.Addr().Is4In6() {
+		return prefix, err
+	}
+	if prefix.Bits() < 96 {
+		return netip.Prefix{}, fmt.Errorf("%s is IPv4-mapped", prefix)
+	}
+	native := netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	return netip.Prefix{}, fmt.Errorf("%s is IPv4-mapped, write it as %s", prefix, native)
+}
+
+func parseAnyPrefix(s string) (netip.Prefix, error) {
 	if strings.Contains(s, "/") {
 		return netip.ParsePrefix(s)
 	}
@@ -523,8 +539,8 @@ func validateEndpoint(s string) error {
 	if host == "" {
 		return fmt.Errorf("host in %q must not be empty", s)
 	}
-	if _, err := parsePort(port); err != nil {
-		return fmt.Errorf("invalid port in %q", s)
+	if p, err := parsePort(port); err != nil || p == 0 {
+		return fmt.Errorf("port in %q must be 1-65535", s)
 	}
 	return nil
 }

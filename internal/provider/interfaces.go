@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 
 	"go4.org/netipx"
 	"tailscale.com/net/netmon"
@@ -38,7 +39,7 @@ func parseInterfaces(js []byte) ([]netmon.Interface, error) {
 		}
 		addrs := make([]net.Addr, 0, len(h.Addresses))
 		for _, a := range h.Addresses {
-			p, err := netip.ParsePrefix(a)
+			p, err := parseInterfacePrefix(a)
 			if err != nil {
 				return nil, fmt.Errorf("interfaces: %s: %w", h.Name, err)
 			}
@@ -59,4 +60,18 @@ func parseInterfaces(js []byte) ([]netmon.Interface, error) {
 		})
 	}
 	return ifs, nil
+}
+
+// parseInterfacePrefix drops the zone of a scoped IPv6 address because the
+// inventory entry already names its interface and a prefix cannot carry a zone.
+func parseInterfacePrefix(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "%") {
+		host, bits, _ := strings.Cut(s, "/")
+		ip, err := netip.ParseAddr(host)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		s = ip.WithZone("").String() + "/" + bits
+	}
+	return netip.ParsePrefix(s)
 }

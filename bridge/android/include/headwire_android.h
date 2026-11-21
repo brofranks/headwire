@@ -41,6 +41,9 @@ char *HeadwireStatus(int32_t handle, const char *field, char **out);
 //   [{"name":"wlan0","index":3,"mtu":1500,"up":true,
 //     "addresses":["192.168.1.5/24","fe80::1/64"]}]
 //
+// An IPv6 address may include a zone, as in "fe80::1%wlan0/64". The enclosing
+// entry identifies its interface.
+//
 // The engine cannot enumerate interfaces itself and sees no network until the
 // first push. Also valid for a prepared handle. A malformed list, or a handle
 // that does not hold the session, is an error and leaves the previous state in

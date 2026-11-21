@@ -115,7 +115,8 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 
 	e.bus = eventbus.New()
 	tracker := health.NewTracker(e.bus)
-	if e.netMon, err = netmon.New(e.bus, logf); err != nil {
+	dev, rtr, err := e.attach(cfg, tracker, opts.Tun)
+	if err != nil {
 		return nil, err
 	}
 	e.dialer = &tsdial.Dialer{Logf: logf}
@@ -123,6 +124,8 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 	// ListenPort is configured explicitly when fixed-endpoint peers need to
 	// name it. An omitted or zero port lets the OS choose.
 	conf := wgengine.Config{
+		Tun:           dev,
+		Router:        rtr,
 		NetMon:        e.netMon,
 		HealthTracker: tracker,
 		Metrics:       new(usermetric.Registry),
@@ -141,20 +144,6 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 			}
 		},
 	}
-	if opts.Tun != nil {
-		conf.Tun = opts.Tun
-		if e.tunName, err = opts.Tun.Name(); err != nil {
-			return nil, err
-		}
-	} else if err := e.kernelTUN(cfg, tracker, &conf); err != nil {
-		return nil, err
-	}
-	// netmon otherwise identifies its own tunnel by Tailscale's interface
-	// names and addresses, which Headwire's are not. Registering it keeps the
-	// tunnel out of netmon's link state and out of the local endpoints
-	// magicsock advertises, which would offer peers a "direct" path through
-	// the tunnel itself. The setting is process-wide.
-	netmon.SetTailscaleInterfaceProps(e.tunName, 0)
 	if e.eng, err = wgengine.NewUserspaceEngine(logf, conf); err != nil {
 		return nil, err
 	}
@@ -261,14 +250,62 @@ var (
 	}
 )
 
-// kernelTUN creates the interface this process owns, with its OS router.
-func (e *Engine) kernelTUN(
+// attach opens the packet device, registers it with netmon as the tunnel,
+// and starts the network monitor, recording them in e.tunName and e.netMon.
+// For a device this process creates it also returns the OS router and sets
+// e.hostDNS. injected is the caller's device, or nil to create a kernel TUN,
+// which attach closes if it fails.
+func (e *Engine) attach(
 	cfg *config.Config,
 	tracker *health.Tracker,
-	conf *wgengine.Config,
-) (err error) {
+	injected tun.Device,
+) (_ tun.Device, rtr router.Router, err error) {
+	dev := injected
+	if dev == nil {
+		if dev, err = kernelTUN(cfg); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err != nil {
+				dev.Close()
+			}
+		}()
+	}
+	if e.tunName, err = dev.Name(); err != nil {
+		return nil, nil, err
+	}
+	// netmon otherwise identifies its own tunnel by Tailscale's interface
+	// names and addresses, which Headwire's are not. Registering it keeps the
+	// tunnel out of netmon's link state and out of the local endpoints
+	// magicsock advertises, which would offer peers a "direct" path through
+	// the tunnel itself. The setting is process-wide, and it precedes the
+	// monitor because the monitor's first snapshot decides which address
+	// family an ordinary peer's endpoint is chosen from.
+	netmon.SetTailscaleInterfaceProps(e.tunName, 0)
+	if e.netMon, err = netmon.New(e.bus, e.logf); err != nil {
+		return nil, nil, err
+	}
+	if injected != nil {
+		return dev, nil, nil
+	}
+	if rtr, err = router.New(e.logf, dev, e.netMon, tracker, e.bus); err != nil {
+		return nil, nil, err
+	}
+	// The process that owns the interface sets the host's DNS. Without a
+	// nameserver no configurator exists, so the host's resolver setup is
+	// neither probed nor touched.
+	if len(cfg.Interface.DNS) > 0 {
+		if e.hostDNS, err = newOSConfigurator(e, tracker, dev); err != nil {
+			return nil, nil, err
+		}
+	}
+	return dev, rtr, nil
+}
+
+// kernelTUN creates the interface this process owns.
+func kernelTUN(cfg *config.Config) (tun.Device, error) {
 	if err := checkHost(cfg); err != nil {
-		return err
+		return nil, err
 	}
 	name := TUNName
 	switch runtime.GOOS {
@@ -279,32 +316,10 @@ func (e *Engine) kernelTUN(
 		// The Windows router resets the adapter MTU to the engine default on
 		// every reconfiguration.
 		if mtu := int(tstun.DefaultTUNMTU()); MTU(cfg) != mtu {
-			return fmt.Errorf("MTU is fixed at %d on Windows", mtu)
+			return nil, fmt.Errorf("MTU is fixed at %d on Windows", mtu)
 		}
 	}
-	dev, err := createTUN(name, MTU(cfg))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			dev.Close()
-		}
-	}()
-	if e.tunName, err = dev.Name(); err != nil {
-		return err
-	}
-	conf.Tun = dev
-	if conf.Router, err = router.New(e.logf, dev, e.netMon, tracker, e.bus); err != nil {
-		return err
-	}
-	// The process that owns the interface sets the host's DNS. Without a
-	// nameserver no configurator exists, so the host's resolver setup is
-	// neither probed nor touched.
-	if len(cfg.Interface.DNS) > 0 {
-		e.hostDNS, err = newOSConfigurator(e, tracker, dev)
-	}
-	return err
+	return createTUN(name, MTU(cfg))
 }
 
 // MTU is the interface MTU: the configured one, else the engine's default.

@@ -79,10 +79,12 @@ type namedTun struct{ tun.Device }
 
 func (namedTun) Name() (string, error) { return "hwtest0", nil }
 
-// TestTunnelIsNotAnEndpoint checks that the tunnel's address, outside
-// Tailscale's ranges, stays out of the endpoints advertised to peers. Start
-// explains why it must.
-func TestTunnelIsNotAnEndpoint(t *testing.T) {
+// fakeInterfaces makes netmon see eth0 with IPv4 192.0.2.10/24 and the
+// tunnel hwtest0 with the given address. It starts with no tunnel registered,
+// so only Start can register hwtest0.
+func fakeInterfaces(t *testing.T, tunnel *net.IPNet) {
+	t.Helper()
+	netmon.SetTailscaleInterfaceProps("", 0)
 	up := net.FlagUp | net.FlagRunning
 	netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
 		return []netmon.Interface{
@@ -105,16 +107,23 @@ func TestTunnelIsNotAnEndpoint(t *testing.T) {
 					Name:  "hwtest0",
 					Flags: up,
 				},
-				AltAddrs: []net.Addr{&net.IPNet{
-					IP:   net.ParseIP("10.99.0.1"),
-					Mask: net.CIDRMask(24, 32),
-				}},
+				AltAddrs: []net.Addr{tunnel},
 			},
 		}, nil
 	})
 	t.Cleanup(func() {
 		netmon.RegisterInterfaceGetter(nil)
 		netmon.SetTailscaleInterfaceProps("", 0)
+	})
+}
+
+// TestTunnelIsNotAnEndpoint checks that the tunnel's address, outside
+// Tailscale's ranges, stays out of the endpoints advertised to peers, which
+// would otherwise offer them a direct path through the tunnel itself.
+func TestTunnelIsNotAnEndpoint(t *testing.T) {
+	fakeInterfaces(t, &net.IPNet{
+		IP:   net.ParseIP("10.99.0.1"),
+		Mask: net.CIDRMask(24, 32),
 	})
 
 	a := node{
@@ -142,5 +151,42 @@ func TestTunnelIsNotAnEndpoint(t *testing.T) {
 			t.Fatalf("endpoints %v never included 192.0.2.10", eps)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestTunnelFamilyIsNotUnderlay checks that an ordinary peer's endpoint is
+// chosen at startup by the underlay's address families, not the tunnel's: an
+// IPv6 tunnel on an IPv4-only host must not select the peer's IPv6 address.
+func TestTunnelFamilyIsNotUnderlay(t *testing.T) {
+	fakeInterfaces(t, &net.IPNet{
+		IP:   net.ParseIP("2001:db8::1"),
+		Mask: net.CIDRMask(64, 128),
+	})
+	a := node{
+		key.NewNode(),
+		netip.MustParsePrefix("100.64.0.1/32"),
+		0,
+	}
+	peer := key.NewNode().Public()
+	cfg := a.parse(t, "", fmt.Sprintf(
+		"[Peer]\nPublicKey = %s\nAllowedIPs = 100.64.0.2/32\nEndpoint = 192.0.2.20:51820\n",
+		//lint:ignore SA1019 raw keys; see config.EncodeKey.
+		config.EncodeKey(peer.Raw32()),
+	))
+	v4 := netip.MustParseAddrPort("192.0.2.20:51820")
+	cfg.Peers[0].Addrs = []netip.AddrPort{
+		netip.MustParseAddrPort("[2001:db8::20]:51820"),
+		v4,
+	}
+	e, err := Start(cfg, tstest.WhileTestRunningLogger(t), Options{
+		Tun: namedTun{tuntest.NewChannelTUN().TUN()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	got := e.state.Load().nodes[peer].Endpoints().AsSlice()
+	if !slices.Equal(got, []netip.AddrPort{v4}) {
+		t.Fatalf("endpoints = %v, want [%v]", got, v4)
 	}
 }

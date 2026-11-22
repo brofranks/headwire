@@ -415,6 +415,41 @@ func TestReloadApplyFailure(t *testing.T) {
 	}
 }
 
+func TestAddsTunnelIPv6(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Interface.Addresses = []netip.Prefix{netip.MustParsePrefix("fd42::1/64")}
+	if !addsTunnelIPv6(nil, cfg) {
+		t.Fatal("startup needs IPv6 for the interface address")
+	}
+	next := &config.Config{
+		Interface: cfg.Interface,
+		Peers: []config.Peer{{
+			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("fd42::/64")},
+		}},
+	}
+	if addsTunnelIPv6(cfg, next) {
+		t.Fatal("the peer's IPv6 route is already installed for the interface")
+	}
+	next.Peers[0].AllowedIPs = append(next.Peers[0].AllowedIPs, netip.MustParsePrefix("fd42::2/128"))
+	if !addsTunnelIPv6(cfg, next) {
+		t.Fatal("a more specific IPv6 route still requires installation")
+	}
+}
+
+func TestIPv4OnlyRouteComparisonAllocations(t *testing.T) {
+	cfg := &config.Config{Peers: []config.Peer{{
+		AllowedIPs: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+	}}}
+	allocs := testing.AllocsPerRun(10, func() {
+		if addsTunnelIPv6(cfg, cfg) {
+			t.Fatal("IPv4-only reload reported a new IPv6 route")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("IPv4-only route comparison allocated %v times, want 0", allocs)
+	}
+}
+
 func TestReloadPreservesSession(t *testing.T) {
 	r := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), freePort(t)}
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.2/32"), freePort(t)}

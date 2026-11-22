@@ -67,9 +67,10 @@ type Options struct {
 
 // Engine is a running headwire node.
 type Engine struct {
-	logf    logger.Logf
-	tunName string
-	state   atomic.Pointer[state]
+	logf          logger.Logf
+	tunName       string
+	ipv6Available func() bool // set when the native Linux router reports it
+	state         atomic.Pointer[state]
 
 	bus    *eventbus.Bus
 	netMon *netmon.Monitor
@@ -145,6 +146,9 @@ func Start(cfg *config.Config, logf logger.Logf, opts Options) (_ *Engine, err e
 		},
 	}
 	if e.eng, err = wgengine.NewUserspaceEngine(logf, conf); err != nil {
+		return nil, err
+	}
+	if err := e.checkIPv6(nil, cfg); err != nil {
 		return nil, err
 	}
 	// LocalBackend normally turns magicsock's per-message disco lines on from
@@ -273,6 +277,11 @@ func (e *Engine) attach(
 	if e.tunName, err = dev.Name(); err != nil {
 		return nil, nil, err
 	}
+	if injected == nil {
+		if err := e.checkTunnelIPv6(cfg); err != nil {
+			return nil, nil, err
+		}
+	}
 	// netmon otherwise identifies its own tunnel by Tailscale's interface
 	// names and addresses, which Headwire's are not. Registering it keeps the
 	// tunnel out of netmon's link state and out of the local endpoints
@@ -298,6 +307,7 @@ func (e *Engine) attach(
 	if rtr, err = router.New(e.logf, dev, e.netMon, tracker, e.bus); err != nil {
 		return nil, nil, err
 	}
+	e.ipv6Available = routerIPv6(rtr)
 	return dev, rtr, nil
 }
 
@@ -324,6 +334,43 @@ func kernelTUN(cfg *config.Config) (tun.Device, error) {
 // MTU is the interface MTU: the configured one, else the engine's default.
 func MTU(cfg *config.Config) int {
 	return cmp.Or(cfg.Interface.MTU, int(tstun.DefaultTUNMTU()))
+}
+
+// addsTunnelIPv6 reports whether applying cfg adds an IPv6 address or route.
+// Interface addresses are fixed on reload, so only peer routes can be new.
+func addsTunnelIPv6(old, cfg *config.Config) bool {
+	is6 := func(p netip.Prefix) bool { return p.Addr().Is6() }
+	if old == nil && slices.ContainsFunc(cfg.Interface.Addresses, is6) {
+		return true
+	}
+	var previous []netip.Prefix
+	for _, peer := range cfg.Peers {
+		for _, p := range peer.AllowedIPs {
+			if !is6(p) {
+				continue
+			}
+			if old == nil {
+				return true
+			}
+			if previous == nil {
+				previous = Routes(old)
+			}
+			if _, found := slices.BinarySearchFunc(previous, p, netip.Prefix.Compare); !found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkIPv6 checks the native router before publishing new IPv6 work.
+func (e *Engine) checkIPv6(old, cfg *config.Config) error {
+	if e.ipv6Available != nil && addsTunnelIPv6(old, cfg) && !e.ipv6Available() {
+		return fmt.Errorf(
+			"IPv6 is unavailable on %s, enable it and retry, or restart Headwire if it started without IPv6",
+			e.tunName)
+	}
+	return nil
 }
 
 // reconfig applies the interface address and the routes implied by every
@@ -453,6 +500,9 @@ func (e *Engine) Reload(cfg *config.Config) error {
 		return err
 	}
 	if err := old.checkSourceOwnership(st); err != nil {
+		return err
+	}
+	if err := e.checkIPv6(old.cfg, cfg); err != nil {
 		return err
 	}
 	e.apply(old, st)

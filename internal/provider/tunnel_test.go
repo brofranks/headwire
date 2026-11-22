@@ -377,6 +377,32 @@ func TestStartWithoutSession(t *testing.T) {
 	}
 }
 
+func TestStartOnOccupiedPort(t *testing.T) {
+	held, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	port := held.LocalAddr().(*net.UDPAddr).AddrPort().Port()
+	h, _, err := Prepare(&config.Config{Interface: config.Interface{
+		PrivateKey: key.NewNode(),
+		ListenPort: port,
+		Addresses:  []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { Stop(h, nil) })
+	var closed bool
+	err = start(t, h, closeTun{tuntest.NewChannelTUN().TUN(), &closed}, nil)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("UDP port %d: address already in use", port)) {
+		t.Fatalf("start on occupied port %d = %v", port, err)
+	}
+	if !closed {
+		t.Fatal("device left open")
+	}
+}
+
 func TestResolve(t *testing.T) {
 	discovery := config.Peer{
 		DiscoKey: discokey.PublicForNode(key.NewNode()),

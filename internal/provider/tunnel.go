@@ -136,10 +136,10 @@ func Resolve(c *config.Config) error {
 	return nil
 }
 
-// Start runs the engine for a prepared handle on dev, which the engine owns
-// from here on. arm, if set, installs the host's process-wide hooks once h is
-// known to hold the session and before the engine binds its first socket. A
-// failed start keeps the handle until Stop.
+// Start takes ownership of dev. It closes the device if h is rejected and
+// otherwise hands it to the engine. arm, if set, installs the host's
+// process-wide hooks once h is known to hold the session and before the
+// engine binds its first socket. A failed start keeps the handle until Stop.
 func Start(h int32, dev tun.Device, logf logger.Logf, arm func()) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -150,13 +150,9 @@ func Start(h int32, dev tun.Device, logf logger.Logf, arm func()) error {
 	if arm != nil {
 		arm()
 	}
-	e, err := engine.Start(cfg, logf, engine.Options{Tun: dev})
-	if err != nil {
-		dev.Close()
-		return err
-	}
-	eng = e
-	return nil
+	var err error
+	eng, err = engine.Start(cfg, logf, engine.Options{Tun: dev})
+	return err
 }
 
 // Status is engine.Status for a running handle: status fields and command

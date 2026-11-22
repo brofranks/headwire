@@ -79,16 +79,39 @@ func TestKernelTUN(t *testing.T) {
 		}
 	}
 
+	configurator(dnsErr, nil)
+	createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
+	if _, err := Start(withDNS, logf, Options{}); !errors.Is(err, dnsErr) {
+		t.Fatalf("DNS setup failure = %v, want %v", err, dnsErr)
+	}
+	configurator(nil, nil)
+	createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
+	if _, err := Start(withDNS, logf, Options{}); err == nil || !rec.closed {
+		t.Fatalf("router setup failure = %v, DNS closed = %v", err, rec.closed)
+	}
+
+	t.Run("router up", func(t *testing.T) {
+		upErr := errors.New("router failed to start")
+		t.Cleanup(router.HookNewUserspaceRouter.SetForTest(func(o router.NewOpts) (router.Router, error) {
+			return failingUpRouter{Router: router.NewFake(o.Logf), err: upErr}, nil
+		}))
+		dev := &countingTun{Device: tuntest.NewChannelTUN().TUN()}
+		createTUN = device(dev, nil)
+		if _, err := Start(plain, tstest.WhileTestRunningLogger(t), Options{}); !errors.Is(err, upErr) {
+			t.Fatalf("router startup failure = %v, want %v", err, upErr)
+		}
+		if dev.closes != 1 {
+			t.Fatalf("device closed %d times, want 1", dev.closes)
+		}
+	})
+
 	defer router.HookNewUserspaceRouter.SetForTest(func(o router.NewOpts) (router.Router, error) {
 		return router.NewFake(o.Logf), nil
 	})()
-	for _, want := range []error{dnsErr, setErr} {
-		configurator(dnsErr, setErr)
-		dnsErr = nil // the second round reaches SetDNS
-		createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
-		if _, err := Start(withDNS, logf, Options{}); !errors.Is(err, want) {
-			t.Fatalf("DNS failure %v: %v", want, err)
-		}
+	configurator(nil, setErr)
+	createTUN = device(tuntest.NewChannelTUN().TUN(), nil)
+	if _, err := Start(withDNS, logf, Options{}); !errors.Is(err, setErr) {
+		t.Fatalf("SetDNS failure = %v, want %v", err, setErr)
 	}
 	configurator(nil, nil)
 	*rec = recordingDNS{}
@@ -141,6 +164,13 @@ func TestKernelTUN(t *testing.T) {
 		e.Close()
 	}
 }
+
+type failingUpRouter struct {
+	router.Router
+	err error
+}
+
+func (r failingUpRouter) Up() error { return r.err }
 
 // recordingDNS is the OS configurator Start receives, keeping what it set.
 type recordingDNS struct {

@@ -57,11 +57,11 @@ const TUNName = "headwire0"
 // Options selects how the engine attaches to the network: a kernel TUN the
 // engine creates, which needs root, unless Tun is set.
 type Options struct {
-	// Tun is a packet device the caller already owns, for embedders that
-	// are handed one by the host: an Apple NetworkExtension provider gets a
-	// utun descriptor it cannot ask the engine to create. The engine then
-	// installs no OS router, because the host owns the interface address
-	// and routes. Close takes the device down.
+	// Tun is an open packet device supplied by the caller, such as the utun
+	// descriptor handed to an Apple NetworkExtension provider. The host owns
+	// the interface address and routes, so the engine installs no OS router.
+	// Start takes ownership of Tun and closes it on failure. After a
+	// successful Start, Close releases it.
 	Tun tun.Device
 }
 
@@ -251,10 +251,9 @@ var (
 )
 
 // attach opens the packet device, registers it with netmon as the tunnel,
-// and starts the network monitor, recording them in e.tunName and e.netMon.
+// and creates the network monitor, recording them in e.tunName and e.netMon.
 // For a device this process creates it also returns the OS router and sets
-// e.hostDNS. injected is the caller's device, or nil to create a kernel TUN,
-// which attach closes if it fails.
+// e.hostDNS. attach closes either device on failure.
 func (e *Engine) attach(
 	cfg *config.Config,
 	tracker *health.Tracker,
@@ -265,12 +264,12 @@ func (e *Engine) attach(
 		if dev, err = kernelTUN(cfg); err != nil {
 			return nil, nil, err
 		}
-		defer func() {
-			if err != nil {
-				dev.Close()
-			}
-		}()
 	}
+	defer func() {
+		if err != nil {
+			dev.Close()
+		}
+	}()
 	if e.tunName, err = dev.Name(); err != nil {
 		return nil, nil, err
 	}
@@ -288,9 +287,6 @@ func (e *Engine) attach(
 	if injected != nil {
 		return dev, nil, nil
 	}
-	if rtr, err = router.New(e.logf, dev, e.netMon, tracker, e.bus); err != nil {
-		return nil, nil, err
-	}
 	// The process that owns the interface sets the host's DNS. Without a
 	// nameserver no configurator exists, so the host's resolver setup is
 	// neither probed nor touched.
@@ -298,6 +294,9 @@ func (e *Engine) attach(
 		if e.hostDNS, err = newOSConfigurator(e, tracker, dev); err != nil {
 			return nil, nil, err
 		}
+	}
+	if rtr, err = router.New(e.logf, dev, e.netMon, tracker, e.bus); err != nil {
+		return nil, nil, err
 	}
 	return dev, rtr, nil
 }

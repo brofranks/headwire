@@ -35,10 +35,24 @@ type unnamedTun struct{ tun.Device }
 
 func (unnamedTun) Name() (string, error) { return "", errors.New("no name") }
 
+type countingTun struct {
+	tun.Device
+	closes int
+}
+
+func (d *countingTun) Close() error {
+	d.closes++
+	return d.Device.Close()
+}
+
 func TestInjectedTunWithoutName(t *testing.T) {
 	a := node{key.NewNode(), netip.MustParsePrefix("100.64.0.1/32"), 0}
-	if _, err := Start(a.parse(t, "", ""), tstest.WhileTestRunningLogger(t), Options{Tun: unnamedTun{tuntest.NewChannelTUN().TUN()}}); err == nil {
+	dev := &countingTun{Device: unnamedTun{tuntest.NewChannelTUN().TUN()}}
+	if _, err := Start(a.parse(t, "", ""), tstest.WhileTestRunningLogger(t), Options{Tun: dev}); err == nil {
 		t.Fatal("started on a device without a name")
+	}
+	if dev.closes != 1 {
+		t.Fatalf("device closed %d times, want 1", dev.closes)
 	}
 }
 

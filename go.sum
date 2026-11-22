@@ -73,8 +73,8 @@ github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb h1:m935MPodAbYS46DG4
 github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb/go.mod h1:PkYb9DJNAwrSvRx5DYA+gUcOIgTGVMNkfSCbZM8cWpI=
 github.com/bmatcuk/doublestar/v4 v4.10.0 h1:zU9WiOla1YA122oLM6i4EXvGW62DvKZVxIe6TYWexEs=
 github.com/bmatcuk/doublestar/v4 v4.10.0/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
-github.com/brofranks/tailscale v1.104.7-headwire.4 h1:Q3UbRbeUqDeUkzaXWenjqEShkYXiem/knY47BKOoKuw=
-github.com/brofranks/tailscale v1.104.7-headwire.4/go.mod h1:pNl682NgUoac2/Um3khv8pduX3D1YPBZTL067+zo8wY=
+github.com/brofranks/tailscale v1.104.7-headwire.5 h1:jF2y8h2NzQTTsbEwKRuYvqtNKeeck7NqSOvpOslU8nA=
+github.com/brofranks/tailscale v1.104.7-headwire.5/go.mod h1:pNl682NgUoac2/Um3khv8pduX3D1YPBZTL067+zo8wY=
 github.com/caarlos0/testfs v0.4.4 h1:3PHvzHi5Lt+g332CiShwS8ogTgS3HjrmzZxCm6JCDr8=
 github.com/caarlos0/testfs v0.4.4/go.mod h1:bRN55zgG4XCUVVHZCeU+/Tz1Q6AxEJOEJTliBy+1DMk=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=

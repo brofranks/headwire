@@ -23,6 +23,7 @@ func TestBuildTags(t *testing.T) {
 		"cloud",          // AWS public IPs as candidates, cloud DNS fallback
 		"useproxy",       // relays reached through a configured HTTP proxy
 		"bakedroots",     // DERP TLS roots if the system store fails
+		"debug",          // logging and dropping flows a peer rejects
 	}
 	b, err := os.ReadFile("../../scripts/goflags.sh")
 	if err != nil {
